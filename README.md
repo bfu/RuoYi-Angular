@@ -8,10 +8,18 @@
   <img alt="JDK" src="https://img.shields.io/badge/JDK-17%2B-ED8B00.svg?logo=openjdk&logoColor=white">
   <img alt="MyBatis" src="https://img.shields.io/badge/MyBatis-4.1-C1666B.svg">
   <img alt="Redis" src="https://img.shields.io/badge/Redis-5%2B-DC382D.svg?logo=redis&logoColor=white">
+  <img alt="version" src="https://img.shields.io/badge/version-3.9.2-blue.svg">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg">
 </p>
 
 > 本仓库**只含后端**与代码生成模板。配套 Angular 前端在 👉 **[bfu/inforstack-ng](https://github.com/bfu/inforstack-ng)**（Angular 22 + NG-ZORRO 22）。
+
+## 目录
+
+- [项目简介](#项目简介) · [配套仓库](#配套仓库) · [技术栈](#技术栈)
+- [目录结构](#目录结构) · [内置能力](#内置能力) · [代码生成（Angular）](#代码生成angular)
+- [快速开始](#快速开始) · [与官方 RuoYi-Vue 的差异](#与官方-ruoyi-vue-的差异)
+- [路线图](#路线图) · [开源协议](#开源协议) · [致谢](#致谢)
 
 ## 项目简介
 
@@ -56,7 +64,8 @@ RuoYi-Angular
 │   └── src/main/resources/vm/angular   # api.service.ts / model.ts / page.ts / page.html / page.less
 ├── sql                 # 初始化脚本（ry_*.sql、quartz.sql）
 ├── doc                 # 官方环境使用手册
-└── scripts             # 辅助脚本（如 sync-upstream.ps1）
+├── scripts             # 辅助脚本（sync-upstream.ps1）
+└── bin                 # Windows 快捷脚本（clean.bat / package.bat / run.bat）
 ```
 
 仓库内**不包含**官方 Vue3 前端：本地克隆的 `ruoyi-vue3/` 仅作对照参考，已被 `.gitignore` 忽略。
@@ -67,12 +76,12 @@ RuoYi-Angular
 | :--- | :--- |
 | 系统管理 | 用户、部门、岗位、菜单、角色、字典、参数、通知公告 |
 | 系统监控 | 在线用户、定时任务、操作日志、登录日志、缓存监控、服务监控、连接池（Druid） |
-| 系统工具 | 代码生成、系统接口（Swagger）、表单构建（官方能力） |
+| 系统工具 | 代码生成、系统接口（Swagger）、表单构建（官方前端页面） |
 | 基础设施 | 登录/注册、验证码、文件上传下载、数据权限、字典缓存、操作日志切面、多数据源 |
 
 ## 代码生成（Angular）
 
-在「系统工具 → 代码生成」导入表后，把生成模板的前端类型选为 **angular**（`tplWebType`），即可产出：
+在「系统工具 → 代码生成」导入表后，把「前端模板类型」选为 **Angular NG-ZORRO 模版** 即可产出 Angular 代码（前端页面的默认选项就是 Angular，对应 `DEFAULT_TPL_WEB_TYPE = 'angular'`，也可切回 Vue3 模版）：
 
 | 生成文件 | 说明 |
 | :--- | :--- |
@@ -99,7 +108,7 @@ CREATE DATABASE `ry-vue` DEFAULT CHARACTER SET utf8mb4;
 
 ### 2. 配置并启动后端
 
-修改 `ruoyi-admin/src/main/resources/application.yml`（数据源、Redis、上传路径；Redis 在 `application-druid.yml` 中亦有相关配置），然后：
+修改 `ruoyi-admin/src/main/resources/application.yml`（端口、Redis、上传路径、MyBatis 映射、Springdoc）与 `application-druid.yml`（数据源 / Druid 连接池），然后：
 
 ```bash
 mvn clean package                        # 打包
