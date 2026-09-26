@@ -1,8 +1,8 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { RequestService } from '../../core/request.service';
-import { AjaxResult, PageQuery, TableDataInfo } from '../../core/models/result';
-import { ${ClassName} } from '../../core/models/${moduleName}';
+import { RequestService } from '@core/request.service';
+import { AjaxResult, PageQuery, TableDataInfo } from '@core/models/result';
+import { ${ClassName} } from '@core/models/${moduleName}';
 
 /** ${functionName}接口，对应后端 ${packageName}.controller.${ClassName}Controller */
 @Injectable({ providedIn: 'root' })

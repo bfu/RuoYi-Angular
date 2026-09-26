@@ -59,20 +59,20 @@ import { NzRadioModule } from 'ng-zorro-antd/radio';
 import { NzSelectModule } from 'ng-zorro-antd/select';
 #end
 import { NzTableModule, NzTableQueryParams } from 'ng-zorro-antd/table';
-import { ${BusinessName}Api } from '../../../api/${moduleName}/${businessName}';
-import { DownloadService } from '../../../core/download.service';
-import { PageQuery } from '../../../core/models/result';
-import { ${ClassName} } from '../../../core/models/${moduleName}';
+import { ${BusinessName}Api } from '@api/${moduleName}/${businessName}';
+import { DownloadService } from '@core/download.service';
+import { PageQuery } from '@core/models/result';
+import { ${ClassName} } from '@core/models/${moduleName}';
 #if($hasDateRange)
-import { addDateRange, parseTime } from '../../../core/utils/ruoyi';
+import { addDateRange, parseTime } from '@core/utils/ruoyi';
 #else
-import { parseTime } from '../../../core/utils/ruoyi';
+import { parseTime } from '@core/utils/ruoyi';
 #end
-import { DictStore } from '../../../store/dict.store';
+import { DictStore } from '@store/dict.store';
 #if(${dicts} != '')
-import { DictTag } from '../../../shared/components/dict-tag/dict-tag';
+import { DictTag } from '@shared/components/dict-tag/dict-tag';
 #end
-import { HasPermiDirective } from '../../../shared/directives/has-permi.directive';
+import { HasPermiDirective } from '@shared/directives/has-permi.directive';
 
 /** ${functionName} */
 @Component({
