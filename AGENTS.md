@@ -1,6 +1,6 @@
 # AGENTS.md
 
-RuoYi-Vue 的多工程仓库：Spring Boot 后端 + 多个并行前端。
+RuoYi-Vue 的定制后端仓库：Spring Boot 后端 + Angular 代码生成模板（前端已拆分为独立仓库 `bfu/inforstack-ng`）。
 
 ## 子工程
 
