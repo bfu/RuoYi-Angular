@@ -1,0 +1,277 @@
+## 生成 Angular NG-ZORRO 列表页模板：src/app/pages/${moduleName}/${businessName}/${businessName}.html
+#set($listedFields = [])
+#foreach($column in $columns)
+#if($column.list || $column.pk)
+#set($ignore = $listedFields.add($column.javaField))
+#end
+#end
+<div class="${businessName}-page">
+  <nz-card [nzBordered]="false" class="search-card">
+    <!-- 日期选择器使用 ngModel，需置于 formGroup 之外，ngNoForm 避免被 NgForm 接管 -->
+    <form nz-form nzLayout="inline" ngNoForm>
+      <ng-container [formGroup]="searchForm">
+#foreach($column in $columns)
+#if($column.query && !($column.htmlType == "datetime" && $column.queryType == "BETWEEN"))
+#set($parentheseIndex=$column.columnComment.indexOf("（"))
+#if($parentheseIndex != -1)
+#set($comment=$column.columnComment.substring(0, $parentheseIndex))
+#else
+#set($comment=$column.columnComment)
+#end
+#if($column.htmlType == "input" || $column.htmlType == "textarea")
+        <nz-form-item>
+          <nz-form-control>
+            <input nz-input formControlName="${column.javaField}" placeholder="请输入${comment}" class="field-md" />
+          </nz-form-control>
+        </nz-form-item>
+#elseif(($column.htmlType == "select" || $column.htmlType == "radio") && "" != $column.dictType)
+        <nz-form-item>
+          <nz-form-control>
+            <nz-select formControlName="${column.javaField}" nzPlaceHolder="请选择${comment}" nzAllowClear class="field-md">
+              @for (item of ${column.dictType}Options(); track item.value) {
+                <nz-option [nzValue]="item.value" [nzLabel]="item.label"></nz-option>
+              }
+            </nz-select>
+          </nz-form-control>
+        </nz-form-item>
+#elseif($column.htmlType == "datetime")
+        <nz-form-item>
+          <nz-form-control>
+            <nz-date-picker formControlName="${column.javaField}" nzPlaceHolder="请选择${comment}" class="field-md"></nz-date-picker>
+          </nz-form-control>
+        </nz-form-item>
+#end
+#end
+#end
+      </ng-container>
+#foreach($column in $columns)
+#if($column.query && $column.htmlType == "datetime" && $column.queryType == "BETWEEN")
+#set($AttrName=$column.javaField.substring(0,1).toUpperCase() + ${column.javaField.substring(1)})
+      <nz-form-item>
+        <nz-form-control>
+          <nz-range-picker [(ngModel)]="dateRange${AttrName}" [ngModelOptions]="{ standalone: true }" class="field-lg"></nz-range-picker>
+        </nz-form-control>
+      </nz-form-item>
+#end
+#end
+      <nz-form-item>
+        <nz-form-control>
+          <button nz-button nzType="primary" (click)="getList()"><nz-icon nzType="search" />搜索</button>
+          <button nz-button class="gap-left" (click)="resetQuery()"><nz-icon nzType="reload" />重置</button>
+        </nz-form-control>
+      </nz-form-item>
+    </form>
+  </nz-card>
+
+  <nz-card [nzBordered]="false" class="table-card">
+    <div class="toolbar">
+      <button nz-button nzType="primary" *appHasPermi="['${permissionPrefix}:add']" (click)="openAdd()">
+        <nz-icon nzType="plus" />新增
+      </button>
+      <button
+        nz-button
+        *appHasPermi="['${permissionPrefix}:edit']"
+        [disabled]="!single()"
+        class="gap-left"
+        (click)="openEdit(selectedRows()[0])"
+      >
+        <nz-icon nzType="edit" />修改
+      </button>
+      <button
+        nz-button
+        nzDanger
+        *appHasPermi="['${permissionPrefix}:remove']"
+        [disabled]="!multiple()"
+        class="gap-left"
+        (click)="delete()"
+      >
+        <nz-icon nzType="delete" />删除
+      </button>
+      <button nz-button *appHasPermi="['${permissionPrefix}:export']" class="gap-left" (click)="export()">
+        <nz-icon nzType="download" />导出
+      </button>
+    </div>
+
+    <nz-table
+      nzSize="middle"
+      [nzData]="rows()"
+      [nzLoading]="loading()"
+      [nzTotal]="total()"
+      [nzPageIndex]="pageNum"
+      [nzPageSize]="pageSize"
+      [nzFrontPagination]="false"
+      [nzShowSizeChanger]="true"
+      [nzShowTotal]="totalTpl"
+      (nzQueryParams)="onQueryParams(#[[$event]]#)"
+    >
+      <thead>
+        <tr>
+          <th nzWidth="50px">
+            <label
+              nz-checkbox
+              [ngModel]="allChecked()"
+              [nzIndeterminate]="indeterminate()"
+              (ngModelChange)="onAllChecked(#[[$event]]#)"
+            ></label>
+          </th>
+#foreach($column in $columns)
+#set($parentheseIndex=$column.columnComment.indexOf("（"))
+#if($parentheseIndex != -1)
+#set($comment=$column.columnComment.substring(0, $parentheseIndex))
+#else
+#set($comment=$column.columnComment)
+#end
+#if($column.pk)
+          <th nzWidth="90px">${comment}</th>
+#elseif($column.list && $column.htmlType == "datetime")
+          <th nzWidth="160px">${comment}</th>
+#elseif($column.list)
+          <th>${comment}</th>
+#end
+#end
+#if(!$listedFields.contains("createTime"))
+          <th nzWidth="160px">创建时间</th>
+#end
+          <th nzWidth="140px" nzRight>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (row of rows(); track row.${pkColumn.javaField}) {
+          <tr>
+            <td>
+              <label
+                nz-checkbox
+                [ngModel]="checkedIds().has(row.${pkColumn.javaField}!)"
+                (ngModelChange)="onItemChecked(row.${pkColumn.javaField}, #[[$event]]#)"
+              ></label>
+            </td>
+#foreach($column in $columns)
+#if($column.pk)
+            <td>{{ row.${column.javaField} }}</td>
+#elseif($column.list && $column.htmlType == "datetime")
+            <td>{{ parseTime(row.${column.javaField}, '{y}-{m}-{d}') }}</td>
+#elseif($column.list && "" != $column.dictType)
+            <td><app-dict-tag [value]="row.${column.javaField}" dictType="${column.dictType}" /></td>
+#elseif($column.list)
+            <td>{{ row.${column.javaField} }}</td>
+#end
+#end
+#if(!$listedFields.contains("createTime"))
+            <td>{{ row.createTime }}</td>
+#end
+            <td nzRight>
+              <a *appHasPermi="['${permissionPrefix}:edit']" (click)="openEdit(row)"><nz-icon nzType="edit" />修改</a>
+              <a *appHasPermi="['${permissionPrefix}:remove']" class="gap-left" (click)="delete(row)">
+                <nz-icon nzType="delete" />删除
+              </a>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </nz-table>
+  </nz-card>
+</div>
+
+<ng-template #totalTpl let-total>共 {{ total }} 条</ng-template>
+
+<nz-modal
+  [nzVisible]="dialogVisible()"
+  (nzVisibleChange)="dialogVisible.set(#[[$event]]#)"
+  (nzOnCancel)="dialogVisible.set(false)"
+  [nzTitle]="dialogTitle()"
+#if($table.formColNum == 2)
+  nzWidth="800px"
+#elseif($table.formColNum == 3)
+  nzWidth="1100px"
+#else
+  nzWidth="640px"
+#end
+  nzOkText="确定"
+  nzCancelText="取消"
+  [nzOkLoading]="submitting()"
+  (nzOnOk)="submitForm()"
+>
+  <ng-container *nzModalContent>
+    <form nz-form [formGroup]="form" nzLayout="vertical">
+      <div nz-row [nzGutter]="16">
+#foreach($column in $columns)
+#if(($column.insert || $column.edit) && !$column.pk && ($column.usableColumn || !$column.superColumn))
+#set($parentheseIndex=$column.columnComment.indexOf("（"))
+#if($parentheseIndex != -1)
+#set($comment=$column.columnComment.substring(0, $parentheseIndex))
+#else
+#set($comment=$column.columnComment)
+#end
+#if($column.htmlType == "textarea")
+        <div nz-col [nzSpan]="24">
+          <nz-form-item>
+            <nz-form-label nzFor="${column.javaField}"#if($column.required) nzRequired#end>${comment}</nz-form-label>
+            <nz-form-control>
+              <textarea nz-input formControlName="${column.javaField}" rows="2" placeholder="请输入${comment}"></textarea>
+            </nz-form-control>
+          </nz-form-item>
+        </div>
+#elseif($column.htmlType == "select" && "" != $column.dictType)
+        <div nz-col [nzSpan]="${colSpan}">
+          <nz-form-item>
+            <nz-form-label nzFor="${column.javaField}"#if($column.required) nzRequired#end>${comment}</nz-form-label>
+            <nz-form-control>
+              <nz-select formControlName="${column.javaField}" nzPlaceHolder="请选择${comment}">
+                @for (item of ${column.dictType}Options(); track item.value) {
+                  <nz-option [nzValue]="item.value" [nzLabel]="item.label"></nz-option>
+                }
+              </nz-select>
+            </nz-form-control>
+          </nz-form-item>
+        </div>
+#elseif($column.htmlType == "radio" && "" != $column.dictType)
+        <div nz-col [nzSpan]="${colSpan}">
+          <nz-form-item>
+            <nz-form-label nzFor="${column.javaField}"#if($column.required) nzRequired#end>${comment}</nz-form-label>
+            <nz-form-control>
+              <nz-radio-group formControlName="${column.javaField}">
+                @for (item of ${column.dictType}Options(); track item.value) {
+                  <label nz-radio [nzValue]="item.value">{{ item.label }}</label>
+                }
+              </nz-radio-group>
+            </nz-form-control>
+          </nz-form-item>
+        </div>
+#elseif($column.htmlType == "checkbox" && "" != $column.dictType)
+        <div nz-col [nzSpan]="${colSpan}">
+          <nz-form-item>
+            <nz-form-label nzFor="${column.javaField}"#if($column.required) nzRequired#end>${comment}</nz-form-label>
+            <nz-form-control>
+              <nz-select formControlName="${column.javaField}" nzMode="multiple" nzPlaceHolder="请选择${comment}">
+                @for (item of ${column.dictType}Options(); track item.value) {
+                  <nz-option [nzValue]="item.value" [nzLabel]="item.label"></nz-option>
+                }
+              </nz-select>
+            </nz-form-control>
+          </nz-form-item>
+        </div>
+#elseif($column.htmlType == "datetime")
+        <div nz-col [nzSpan]="${colSpan}">
+          <nz-form-item>
+            <nz-form-label nzFor="${column.javaField}"#if($column.required) nzRequired#end>${comment}</nz-form-label>
+            <nz-form-control>
+              <nz-date-picker formControlName="${column.javaField}" nzPlaceHolder="请选择${comment}"></nz-date-picker>
+            </nz-form-control>
+          </nz-form-item>
+        </div>
+#else
+        <div nz-col [nzSpan]="${colSpan}">
+          <nz-form-item>
+            <nz-form-label nzFor="${column.javaField}"#if($column.required) nzRequired#end>${comment}</nz-form-label>
+            <nz-form-control nzErrorTip="请输入${comment}">
+              <input nz-input formControlName="${column.javaField}" placeholder="请输入${comment}" />
+            </nz-form-control>
+          </nz-form-item>
+        </div>
+#end
+#end
+#end
+      </div>
+    </form>
+  </ng-container>
+</nz-modal>

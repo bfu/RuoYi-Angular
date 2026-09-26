@@ -1,0 +1,414 @@
+## 生成 Angular NG-ZORRO 列表页：src/app/pages/${moduleName}/${businessName}/${businessName}.ts
+## 使用前请在 pages/component-map.ts 中登记：'${moduleName}/${businessName}/index': () => import('./${moduleName}/${businessName}/${businessName}').then((m) => m.${BusinessName}Page)
+#set($hasSelect = false)
+#set($hasRadio = false)
+#set($hasCheckbox = false)
+#set($hasDatetime = false)
+#set($hasTextarea = false)
+#set($hasRequired = false)
+#set($hasDateRange = false)
+#foreach($column in $columns)
+#if($column.htmlType == "select" || $column.htmlType == "radio" || $column.htmlType == "checkbox")
+#set($hasSelect = true)
+#end
+#if($column.htmlType == "radio")
+#set($hasRadio = true)
+#end
+#if($column.htmlType == "checkbox")
+#set($hasCheckbox = true)
+#end
+#if($column.htmlType == "datetime")
+#set($hasDatetime = true)
+#end
+#if($column.htmlType == "textarea")
+#set($hasTextarea = true)
+#end
+#if($column.required)
+#set($hasRequired = true)
+#end
+#if($column.query && $column.htmlType == "datetime" && $column.queryType == "BETWEEN")
+#set($hasDateRange = true)
+#end
+#end
+#if(${dicts} != '')
+#set($dictsNoSymbol = $dicts.replace("'", ""))
+#set($dictList = $dictsNoSymbol.split(", "))
+#end
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
+#if($hasRequired)
+import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
+#else
+import { FormBuilder, FormsModule, ReactiveFormsModule } from '@angular/forms';
+#end
+import { NzButtonModule } from 'ng-zorro-antd/button';
+import { NzCardModule } from 'ng-zorro-antd/card';
+import { NzCheckboxModule } from 'ng-zorro-antd/checkbox';
+#if($hasDatetime)
+import { NzDatePickerModule } from 'ng-zorro-antd/date-picker';
+#end
+import { NzFormModule } from 'ng-zorro-antd/form';
+import { NzGridModule } from 'ng-zorro-antd/grid';
+import { NzIconModule } from 'ng-zorro-antd/icon';
+import { NzInputModule } from 'ng-zorro-antd/input';
+import { NzMessageService } from 'ng-zorro-antd/message';
+import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
+#if($hasRadio)
+import { NzRadioModule } from 'ng-zorro-antd/radio';
+#end
+#if($hasSelect)
+import { NzSelectModule } from 'ng-zorro-antd/select';
+#end
+import { NzTableModule, NzTableQueryParams } from 'ng-zorro-antd/table';
+import { ${BusinessName}Api } from '../../../api/${moduleName}/${businessName}';
+import { DownloadService } from '../../../core/download.service';
+import { PageQuery } from '../../../core/models/result';
+import { ${ClassName} } from '../../../core/models/${moduleName}';
+#if($hasDateRange)
+import { addDateRange, parseTime } from '../../../core/utils/ruoyi';
+#else
+import { parseTime } from '../../../core/utils/ruoyi';
+#end
+import { DictStore } from '../../../store/dict.store';
+#if(${dicts} != '')
+import { DictTag } from '../../../shared/components/dict-tag/dict-tag';
+#end
+import { HasPermiDirective } from '../../../shared/directives/has-permi.directive';
+
+/** ${functionName} */
+@Component({
+  selector: 'app-${businessName}-page',
+  imports: [
+    FormsModule,
+    ReactiveFormsModule,
+#if(${dicts} != '')
+    DictTag,
+#end
+    HasPermiDirective,
+    NzButtonModule,
+    NzCardModule,
+    NzCheckboxModule,
+#if($hasDatetime)
+    NzDatePickerModule,
+#end
+    NzFormModule,
+    NzGridModule,
+    NzIconModule,
+    NzInputModule,
+    NzModalModule,
+#if($hasRadio)
+    NzRadioModule,
+#end
+#if($hasSelect)
+    NzSelectModule,
+#end
+    NzTableModule,
+  ],
+  templateUrl: './${businessName}.html',
+  styleUrl: './${businessName}.less',
+})
+export class ${BusinessName}Page implements OnInit {
+  private readonly api = inject(${BusinessName}Api);
+  private readonly fb = inject(FormBuilder);
+  private readonly modal = inject(NzModalService);
+  private readonly message = inject(NzMessageService);
+  private readonly download = inject(DownloadService);
+  private readonly dictStore = inject(DictStore);
+
+  readonly searchForm = this.fb.group({
+#foreach($column in $columns)
+#if($column.query && !($column.htmlType == "datetime" && $column.queryType == "BETWEEN"))
+#if($column.htmlType == "datetime")
+    ${column.javaField}: [null as Date | null],
+#else
+    ${column.javaField}: [''],
+#end
+#end
+#end
+  });
+#foreach($column in $columns)
+#if($column.query && $column.htmlType == "datetime" && $column.queryType == "BETWEEN")
+#set($AttrName=$column.javaField.substring(0,1).toUpperCase() + ${column.javaField.substring(1)})
+
+  dateRange${AttrName}: Date[] = [];
+#end
+#end
+
+  readonly rows = signal<${ClassName}[]>([]);
+  readonly total = signal(0);
+  readonly loading = signal(false);
+  pageNum = 1;
+  pageSize = 10;
+
+  readonly checkedIds = signal<Set<number>>(new Set());
+  readonly allChecked = signal(false);
+  readonly indeterminate = signal(false);
+
+  readonly dialogVisible = signal(false);
+  readonly dialogTitle = signal('');
+  readonly submitting = signal(false);
+
+  readonly form = this.fb.group({
+    ${pkColumn.javaField}: [undefined as number | undefined],
+#foreach($column in $columns)
+#if(($column.insert || $column.edit) && !$column.pk && ($column.usableColumn || !$column.superColumn))
+#if($column.htmlType == "checkbox")
+    ${column.javaField}: [[] as string[]#if($column.required), [Validators.required]#end],
+#elseif($column.htmlType == "datetime")
+    ${column.javaField}: [null as Date | null#if($column.required), [Validators.required]#end],
+#else
+    ${column.javaField}: [''#if($column.required), [Validators.required]#end],
+#end
+#end
+#end
+  });
+
+  readonly isEdit = computed(() => this.form.controls.${pkColumn.javaField}.value !== undefined);
+  readonly single = computed(() => this.checkedIds().size === 1);
+  readonly multiple = computed(() => this.checkedIds().size > 0);
+#if(${dicts} != '')
+#foreach($dictType in $dictList)
+  readonly ${dictType}Options = computed(() => this.dictStore.getDict('${dictType}') ?? []);
+#end
+#end
+
+  ngOnInit(): void {
+#if(${dicts} != '')
+#foreach($dictType in $dictList)
+    if (!this.dictStore.getDict('${dictType}')) {
+      this.dictStore.loadDict('${dictType}').subscribe();
+    }
+#end
+#end
+    this.getList();
+  }
+
+  private buildQuery(): PageQuery {
+    const value = this.searchForm.getRawValue();
+    let query: PageQuery = {
+      pageNum: this.pageNum,
+      pageSize: this.pageSize,
+#foreach($column in $columns)
+#if($column.query && !($column.htmlType == "datetime" && $column.queryType == "BETWEEN"))
+#if($column.htmlType == "datetime")
+      ${column.javaField}: value.${column.javaField} ? parseTime(value.${column.javaField}, '{y}-{m}-{d}') ?? undefined : undefined,
+#else
+      ${column.javaField}: value.${column.javaField} || undefined,
+#end
+#end
+#end
+    };
+#foreach($column in $columns)
+#if($column.query && $column.htmlType == "datetime" && $column.queryType == "BETWEEN")
+#set($AttrName=$column.javaField.substring(0,1).toUpperCase() + ${column.javaField.substring(1)})
+    const range${AttrName} = this.dateRange${AttrName}?.length
+      ? [parseTime(this.dateRange${AttrName}[0], '{y}-{m}-{d}') ?? '', parseTime(this.dateRange${AttrName}[1], '{y}-{m}-{d}') ?? '']
+      : [];
+    query = addDateRange(query, range${AttrName}, '${AttrName}');
+#end
+#end
+    return query;
+  }
+
+  getList(): void {
+    this.loading.set(true);
+    this.api.list${BusinessName}(this.buildQuery()).subscribe({
+      next: (res) => {
+        this.rows.set(res.rows ?? []);
+        this.total.set(res.total ?? 0);
+        this.loading.set(false);
+        this.refreshCheckedStatus();
+      },
+      error: () => this.loading.set(false),
+    });
+  }
+
+  onQueryParams(params: NzTableQueryParams): void {
+    this.pageNum = params.pageIndex;
+    this.pageSize = params.pageSize;
+    this.getList();
+  }
+
+  resetQuery(): void {
+    this.searchForm.reset({
+#foreach($column in $columns)
+#if($column.query && !($column.htmlType == "datetime" && $column.queryType == "BETWEEN"))
+#if($column.htmlType == "datetime")
+      ${column.javaField}: null,
+#else
+      ${column.javaField}: '',
+#end
+#end
+#end
+    });
+#foreach($column in $columns)
+#if($column.query && $column.htmlType == "datetime" && $column.queryType == "BETWEEN")
+#set($AttrName=$column.javaField.substring(0,1).toUpperCase() + ${column.javaField.substring(1)})
+    this.dateRange${AttrName} = [];
+#end
+#end
+    this.pageNum = 1;
+    this.getList();
+  }
+
+  onAllChecked(checked: boolean): void {
+    const ids = new Set<number>();
+    if (checked) {
+      this.rows().forEach((row) => row.${pkColumn.javaField} !== undefined && ids.add(row.${pkColumn.javaField}));
+    }
+    this.checkedIds.set(ids);
+    this.allChecked.set(checked);
+    this.indeterminate.set(false);
+  }
+
+  onItemChecked(${pkColumn.javaField}: number | undefined, checked: boolean): void {
+    if (${pkColumn.javaField} === undefined) {
+      return;
+    }
+    const ids = new Set(this.checkedIds());
+    if (checked) {
+      ids.add(${pkColumn.javaField});
+    } else {
+      ids.delete(${pkColumn.javaField});
+    }
+    this.checkedIds.set(ids);
+    this.refreshCheckedStatus();
+  }
+
+  private refreshCheckedStatus(): void {
+    const list = this.rows();
+    const selected = list.filter((row) => row.${pkColumn.javaField} !== undefined && this.checkedIds().has(row.${pkColumn.javaField})).length;
+    this.allChecked.set(list.length > 0 && selected === list.length);
+    this.indeterminate.set(selected > 0 && selected < list.length);
+  }
+
+  selectedRows(): ${ClassName}[] {
+    return this.rows().filter((row) => row.${pkColumn.javaField} !== undefined && this.checkedIds().has(row.${pkColumn.javaField}));
+  }
+
+  openAdd(): void {
+    this.resetForm();
+    this.dialogTitle.set('添加${functionName}');
+    this.dialogVisible.set(true);
+  }
+
+  openEdit(row: ${ClassName}): void {
+    this.resetForm();
+    this.form.patchValue({
+      ${pkColumn.javaField}: row.${pkColumn.javaField},
+#foreach($column in $columns)
+#if(($column.insert || $column.edit) && !$column.pk && ($column.usableColumn || !$column.superColumn))
+#if($column.htmlType == "datetime")
+      ${column.javaField}: this.toDate(row.${column.javaField}),
+#elseif($column.htmlType == "checkbox")
+      ${column.javaField}: row.${column.javaField} ? String(row.${column.javaField}).split(',') : [],
+#else
+      ${column.javaField}: row.${column.javaField} ?? '',
+#end
+#end
+#end
+    });
+    this.dialogTitle.set('修改${functionName}');
+    this.dialogVisible.set(true);
+  }
+
+  private resetForm(): void {
+    this.form.reset({
+      ${pkColumn.javaField}: undefined,
+#foreach($column in $columns)
+#if(($column.insert || $column.edit) && !$column.pk && ($column.usableColumn || !$column.superColumn))
+#if($column.htmlType == "checkbox")
+      ${column.javaField}: [],
+#elseif($column.htmlType == "datetime")
+      ${column.javaField}: null,
+#else
+      ${column.javaField}: '',
+#end
+#end
+#end
+    });
+  }
+#if($hasDatetime)
+
+  /** 后端时间字符串 → Date，供日期控件回显 */
+  private toDate(value?: string): Date | null {
+    if (!value) {
+      return null;
+    }
+    const date = new Date(String(value).replace(/-/g, '/'));
+    return isNaN(date.getTime()) ? null : date;
+  }
+#end
+
+  private buildPayload(): ${ClassName} {
+    const value = this.form.getRawValue();
+    return {
+      ...value,
+#foreach($column in $columns)
+#if(($column.insert || $column.edit) && !$column.pk && ($column.usableColumn || !$column.superColumn))
+#if($column.htmlType == "datetime")
+      ${column.javaField}: value.${column.javaField} ? parseTime(value.${column.javaField}, '{y}-{m}-{d}') ?? undefined : undefined,
+#elseif($column.htmlType == "checkbox")
+      ${column.javaField}: (value.${column.javaField} ?? []).join(','),
+#end
+#end
+#end
+    } as ${ClassName};
+  }
+
+  submitForm(): void {
+    if (this.form.invalid) {
+      Object.values(this.form.controls).forEach((control) => {
+        control.markAsDirty();
+        control.updateValueAndValidity();
+      });
+      return;
+    }
+    this.submitting.set(true);
+    const payload = this.buildPayload();
+    const request$ = this.isEdit() ? this.api.update${BusinessName}(payload) : this.api.add${BusinessName}(payload);
+    request$.subscribe({
+      next: () => {
+        this.message.success(this.isEdit() ? '修改成功' : '新增成功');
+        this.submitting.set(false);
+        this.dialogVisible.set(false);
+        this.getList();
+      },
+      error: () => this.submitting.set(false),
+    });
+  }
+
+  delete(row?: ${ClassName}): void {
+    const targets = row ? [row] : this.selectedRows();
+    if (!targets.length) {
+      return;
+    }
+    const ids = targets.map((item) => item.${pkColumn.javaField}) as number[];
+    this.modal.confirm({
+      nzTitle: '系统提示',
+      nzContent: '是否确认删除${functionName}编号为"' + ids.join(',') + '"的数据项？',
+      nzOkText: '确定',
+      nzCancelText: '取消',
+      nzOkDanger: true,
+      nzOnOk: () => {
+        this.api.del${BusinessName}(ids).subscribe({
+          next: () => {
+            this.message.success('删除成功');
+            this.checkedIds.set(new Set());
+            this.getList();
+          },
+        });
+      },
+    });
+  }
+
+  export(): void {
+    const query = this.buildQuery();
+    const params: Record<string, unknown> = Object.fromEntries(
+      Object.entries(query).filter(([key]) => key !== 'pageNum' && key !== 'pageSize'),
+    );
+    const filename = `${businessName}_#[[${]]#parseTime(new Date(), '{y}{m}{d}{h}{i}{s}')}.xlsx`;
+    this.download.download('/${moduleName}/${businessName}/export', params, filename).subscribe({
+      next: () => this.message.success('导出成功'),
+    });
+  }
+}

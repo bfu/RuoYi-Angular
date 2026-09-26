@@ -1,0 +1,37 @@
+import { Injectable, inject } from '@angular/core';
+import { Observable } from 'rxjs';
+import { RequestService } from '../../core/request.service';
+import { AjaxResult, PageQuery, TableDataInfo } from '../../core/models/result';
+import { ${ClassName} } from '../../core/models/${moduleName}';
+
+/** ${functionName}接口，对应后端 ${packageName}.controller.${ClassName}Controller */
+@Injectable({ providedIn: 'root' })
+export class ${BusinessName}Api {
+  private readonly request = inject(RequestService);
+
+  /** 查询${functionName}列表 */
+  list${BusinessName}(query: PageQuery): Observable<TableDataInfo<${ClassName}>> {
+    return this.request.get<TableDataInfo<${ClassName}>>('/${moduleName}/${businessName}/list', query);
+  }
+
+  /** 查询${functionName}详细 */
+  get${BusinessName}(${pkColumn.javaField}: number | string): Observable<AjaxResult<${ClassName}>> {
+    return this.request.get<AjaxResult<${ClassName}>>('/${moduleName}/${businessName}/' + ${pkColumn.javaField});
+  }
+
+  /** 新增${functionName} */
+  add${BusinessName}(data: ${ClassName}): Observable<AjaxResult> {
+    return this.request.post<AjaxResult>('/${moduleName}/${businessName}', data);
+  }
+
+  /** 修改${functionName} */
+  update${BusinessName}(data: ${ClassName}): Observable<AjaxResult> {
+    return this.request.put<AjaxResult>('/${moduleName}/${businessName}', data);
+  }
+
+  /** 删除${functionName} */
+  del${BusinessName}(${pkColumn.javaField}: number | string | number[]): Observable<AjaxResult> {
+    const ids = Array.isArray(${pkColumn.javaField}) ? ${pkColumn.javaField}.join(',') : ${pkColumn.javaField};
+    return this.request.delete<AjaxResult>('/${moduleName}/${businessName}/' + ids);
+  }
+}

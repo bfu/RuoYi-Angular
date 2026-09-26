@@ -1,0 +1,12 @@
+## 生成 Angular NG-ZORRO 列表页样式：src/app/pages/${moduleName}/${businessName}/${businessName}.less
+.field-md {
+  width: 180px;
+}
+
+.field-lg {
+  width: 260px;
+}
+
+.gap-left {
+  margin-left: 8px;
+}

@@ -1,0 +1,57 @@
+/**
+ * ${functionName}数据模型
+ * 字段与后端 ${packageName}.domain.${ClassName} 保持一致
+ */
+export interface ${ClassName} {
+#foreach($column in $columns)
+#set($parentheseIndex=$column.columnComment.indexOf("（"))
+#if($parentheseIndex != -1)
+#set($comment=$column.columnComment.substring(0, $parentheseIndex))
+#else
+#set($comment=$column.columnComment)
+#end
+#set($type = "string")
+#if($column.javaType == "Long" || $column.javaType == "Integer")
+#set($type = "number")
+#elseif($column.javaType == "Boolean")
+#set($type = "boolean")
+#end
+  /** ${comment} */
+  ${column.javaField}?: ${type};
+#end
+#set($baseFields = ["createBy", "createTime", "updateBy", "updateTime", "remark"])
+#set($columnFields = [])
+#foreach($column in $columns)
+#set($ignore = $columnFields.add($column.javaField))
+#end
+#foreach($field in $baseFields)
+#if(!$columnFields.contains($field))
+  ${field}?: string;
+#end
+#end
+}
+#if($table.sub)
+
+/**
+ * ${subTable.functionName}数据模型
+ * 字段与后端 ${packageName}.domain.${subClassName} 保持一致
+ */
+export interface ${subClassName} {
+#foreach($column in $subTable.columns)
+#set($parentheseIndex=$column.columnComment.indexOf("（"))
+#if($parentheseIndex != -1)
+#set($comment=$column.columnComment.substring(0, $parentheseIndex))
+#else
+#set($comment=$column.columnComment)
+#end
+#set($type = "string")
+#if($column.javaType == "Long" || $column.javaType == "Integer")
+#set($type = "number")
+#elseif($column.javaType == "Boolean")
+#set($type = "boolean")
+#end
+  /** ${comment} */
+  ${column.javaField}?: ${type};
+#end
+}
+#end
