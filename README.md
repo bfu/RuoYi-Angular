@@ -1,97 +1,86 @@
 <p align="center">
-  <img alt="logo" src="https://oscimg.oschina.net/oscnet/up-d3d0a9303e11d522a06cd263f3079027715.png">
+  <img alt="logo" src="https://oscimg.oschina.net/oscnet/up-d3d0a9303e11d522a06cd263f3079027715.png" width="120">
 </p>
-<h1 align="center" style="margin: 30px 0 30px; font-weight: bold;">RuoYi-Angular v3.9.2</h1>
-<h4 align="center">基于 Spring Boot + Angular 前后端分离的 Java 快速开发框架</h4>
+<h1 align="center" style="margin: 24px 0; font-weight: bold;">RuoYi-Angular</h1>
+<h4 align="center">RuoYi-Vue 3.9.2 后端 · 内置 Angular 代码生成模板</h4>
 <p align="center">
-  <img alt="Angular" src="https://img.shields.io/badge/Angular-22-dd0031.svg?logo=angular&logoColor=white">
-  <img alt="NG-ZORRO" src="https://img.shields.io/badge/NG--ZORRO-22-1890ff.svg">
-  <img alt="Spring Boot" src="https://img.shields.io/badge/Spring%20Boot-4.1-6db33f.svg?logo=springboot&logoColor=white">
-  <img alt="JDK" src="https://img.shields.io/badge/JDK-17%2B-orange.svg?logo=openjdk&logoColor=white">
+  <img alt="Spring Boot" src="https://img.shields.io/badge/Spring%20Boot-4.1-6DB33F.svg?logo=springboot&logoColor=white">
+  <img alt="JDK" src="https://img.shields.io/badge/JDK-17%2B-ED8B00.svg?logo=openjdk&logoColor=white">
+  <img alt="MyBatis" src="https://img.shields.io/badge/MyBatis-4.1-C1666B.svg">
+  <img alt="Redis" src="https://img.shields.io/badge/Redis-5%2B-DC382D.svg?logo=redis&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green.svg">
 </p>
 
-## 平台简介
+> 本仓库**只含后端**与代码生成模板。配套 Angular 前端在 👉 **[bfu/inforstack-ng](https://github.com/bfu/inforstack-ng)**（Angular 22 + NG-ZORRO 22）。
 
-本项目在 [RuoYi-Vue](https://gitee.com/y_project/RuoYi-Vue) 官方后端基础上，**将前端由 Vue 完整重写为 Angular**：后端沿用 Spring Boot 多模块工程（`ruoyi-admin`/`ruoyi-framework`/`ruoyi-system`/`ruoyi-common`/`ruoyi-quartz`/`ruoyi-generator`），前端为独立 Angular 工程 `inforstack-ng`（Angular 22 独立组件 + NG-ZORRO 22 + RxJS），沿用若依的菜单、权限、字典、代码生成等全部能力，页面布局与交互与官方 Vue 版保持一致。
+## 项目简介
 
-- 后端：Spring Boot 4.1、Spring Security、Redis、JWT（与官方 RuoYi-Vue 3.9.2 完全兼容，接口零改动）。
-- 前端：Angular 22（standalone 独立组件，无 NgModule）、NG-ZORRO 22、RxJS 7、ECharts 6、Less，构建工具为 Angular CLI / esbuild。
-- 认证：JWT Token，支持多终端接入；动态路由由后端菜单驱动，按钮级权限由指令 `*hasPermi` 控制。
-- 工程内仍保留官方 Vue3 前端目录 `ruoyi-vue3`，仅作对照参考，非本项目主前端：该目录是 `yangzongzhuan/RuoYi-Vue3` 的本地克隆，已被 `.gitignore` 忽略，不随本仓库提交。
+后端完整沿用 [RuoYi-Vue](https://gitee.com/y_project/RuoYi-Vue) 官方实现（多模块 Spring Boot 工程），**接口零改造**，因此官方 Vue 前端与 Angular 前端可以直接共用同一套后端服务。
+
+在此之上做的定制：
+
+- **内置 Angular 代码生成模板**：`ruoyi-generator` 支持 `tplWebType = angular`，可生成 NG-ZORRO 风格的 Angular 独立组件（`.ts` / `.html` / `.less`）与 `api.service.ts`、模型类，生成结果可直接放入 `inforstack-ng`。
+- **接口保持官方兼容**：认证、菜单、字典、权限、日志、定时任务等全部接口与官方 3.9.2 一致。
+
+## 配套仓库
+
+| 仓库 | 说明 |
+| :--- | :--- |
+| [bfu/RuoYi-Angular](https://github.com/bfu/RuoYi-Angular) | 本仓库：Spring Boot 后端 + 代码生成模板 + SQL 脚本 |
+| [bfu/inforstack-ng](https://github.com/bfu/inforstack-ng) | Angular 22 + NG-ZORRO 22 前端（独立仓库） |
+
+两个仓库独立演进，只要接口不变即可任意组合；前端 `/dev-api` 通过 `proxy.conf.json` 代理到本后端 `http://localhost:8080`，无需配置跨域。
 
 ## 技术栈
 
 | 分层 | 技术 | 说明 |
 | :--- | :--- | :--- |
-| 前端框架 | Angular 22 | 全量独立组件（standalone），应用级 providers 集中在 `src/app/app.config.ts` |
-| UI 组件库 | NG-ZORRO 22 | Ant Design 的 Angular 实现，中文语言包 + 图标按需注册 |
-| 状态/数据流 | RxJS 7 + Service 单例 | 用户信息、字典等轻量状态放在 `src/app/store` |
-| 路由 | Angular Router | 静态路由 + 后端菜单动态路由（`pages/dynamic-routes.ts`） |
-| 图表 | ECharts 6 | 封装为 `shared/components/echart` 组件 |
-| 后端框架 | Spring Boot 4.1 + Spring Security | JDK 17+ |
-| 持久化 | MyBatis + PageHelper + Druid | MySQL 为主，Druid 连接池监控内置 |
-| 缓存 | Redis | 登录态、字典、缓存监控 |
-| 接口文档 | Springdoc / Swagger | `/v3/api-docs`、`/swagger-ui.html` |
+| 基础框架 | Spring Boot 4.1 | JDK 17+，父工程 `pom.xml` 统一管理依赖版本 |
+| 安全框架 | Spring Security + JWT | 无状态登录，支持多终端接入 |
+| 持久层 | MyBatis + PageHelper + Druid | Druid 连接池监控内置 |
+| 数据库 | MySQL 5.7 / 8.0 | 字符集 `utf8mb4` |
+| 缓存 | Redis 5+ | 登录态、字典、缓存监控 |
+| 定时任务 | Quartz | `ruoyi-quartz` 模块 |
+| 接口文档 | Springdoc（OpenAPI 3） | `/v3/api-docs`、`/swagger-ui.html` |
 
 ## 目录结构
 
 ```
-RuoYi-Vue
-├── ruoyi-admin         # 后端启动模块（Spring Boot 入口、端口 8080）
-├── ruoyi-framework     # 框架核心（安全、配置、拦截器、数据源）
-├── ruoyi-system        # 系统业务模块（用户/角色/菜单/字典...）
-├── ruoyi-common        # 通用工具与注解
-├── ruoyi-quartz        # 定时任务模块
-├── ruoyi-generator     # 代码生成模块
-├── inforstack-ng       # ★ Angular 前端工程（本项目主前端）
-│   ├── src/app/api     # 后端接口封装（system / monitor / tool）
-│   ├── src/app/core    # 请求服务、拦截器、下载、路由复用策略
-│   ├── src/app/layout  # 布局：侧边栏、导航、标签页、主题设置
-│   ├── src/app/pages   # 业务页面：system / monitor / tool / login / ...
-│   ├── src/app/shared  # 指令、守卫、管道、通用组件
-│   └── proxy.conf.json # 开发代理：/dev-api → http://localhost:8080
-├── ruoyi-vue3          # 官方 Vue3 前端（本地克隆作为对照参考，已 gitignore，不提交）
-└── sql                 # 初始化脚本（ry_*.sql、quartz.sql）
+RuoYi-Angular
+├── ruoyi-admin         # 启动模块（RuoYiApplication，端口 8080）
+├── ruoyi-framework     # 框架核心：安全、配置、拦截器、数据源
+├── ruoyi-system        # 系统业务：用户 / 角色 / 菜单 / 部门 / 字典 ...
+├── ruoyi-common        # 通用工具、注解、常量、异常处理
+├── ruoyi-quartz        # 定时任务与调度日志
+├── ruoyi-generator     # 代码生成（含 vm/angular 模板）
+│   └── src/main/resources/vm/angular   # api.service.ts / model.ts / page.ts / page.html / page.less
+├── sql                 # 初始化脚本（ry_*.sql、quartz.sql）
+├── doc                 # 官方环境使用手册
+└── scripts             # 辅助脚本（如 sync-upstream.ps1）
 ```
 
-## 已实现功能
+仓库内**不包含**官方 Vue3 前端：本地克隆的 `ruoyi-vue3/` 仅作对照参考，已被 `.gitignore` 忽略。
 
-### 系统管理
+## 内置能力
 
-| 模块 | 页面路径（前端目录） | 说明 |
-| :--- | :--- | :--- |
-| 用户管理 | `pages/system/user` | 用户配置、角色分配、重置密码、导入导出 |
-| 部门管理 | `pages/system/dept` | 组织机构树、数据权限 |
-| 岗位管理 | `pages/system/post` | 职务配置 |
-| 菜单管理 | `pages/system/menu` | 菜单/按钮权限标识，驱动前端动态路由 |
-| 角色管理 | `pages/system/role` | 菜单权限分配、数据范围划分 |
-| 字典管理 | `pages/system/dict` | 字典类型与字典数据维护 |
-| 参数设置 | `pages/system/config` | 系统动态参数 |
-| 通知公告 | `pages/system/notice` | 公告发布与维护 |
+| 分组 | 模块 |
+| :--- | :--- |
+| 系统管理 | 用户、部门、岗位、菜单、角色、字典、参数、通知公告 |
+| 系统监控 | 在线用户、定时任务、操作日志、登录日志、缓存监控、服务监控、连接池（Druid） |
+| 系统工具 | 代码生成、系统接口（Swagger）、表单构建（官方能力） |
+| 基础设施 | 登录/注册、验证码、文件上传下载、数据权限、字典缓存、操作日志切面、多数据源 |
 
-### 系统监控
+## 代码生成（Angular）
 
-| 模块 | 页面路径 | 说明 |
-| :--- | :--- | :--- |
-| 在线用户 | `pages/monitor/online` | 活跃用户监控、强制下线 |
-| 定时任务 | `pages/monitor/job` | 任务调度与执行日志 |
-| 操作日志 | `pages/monitor/operlog` | 正常/异常操作记录 |
-| 登录日志 | `pages/monitor/logininfor` | 登录记录与异常 |
-| 缓存监控 | `pages/monitor/cache` | 缓存查询、命令统计 |
-| 服务监控 | `pages/monitor/server` | CPU、内存、磁盘、堆栈 |
-| 连接池监视 | `pages/monitor/druid` | Druid 连接池与 SQL 分析（iframe 内嵌） |
+在「系统工具 → 代码生成」导入表后，把生成模板的前端类型选为 **angular**（`tplWebType`），即可产出：
 
-### 系统工具
+| 生成文件 | 说明 |
+| :--- | :--- |
+| `api.service.ts` | 基于统一请求封装的接口服务 |
+| `model.ts` | 实体与查询参数模型 |
+| `page.ts` / `page.html` / `page.less` | NG-ZORRO 表格 + 弹窗增删改查的独立组件 |
 
-| 模块 | 页面路径 | 说明 |
-| :--- | :--- | :--- |
-| 代码生成 | `pages/tool/gen` | 导入表、编辑字段、预览与生成下载 |
-| 系统接口 | `pages/tool/swagger` | Swagger 文档内嵌 |
-
-### 通用能力
-
-登录/注册、验证码、404/401 错误页、个人中心、主题与布局设置（侧边栏主题、标签页、固定头部）、多标签页 + 路由复用（`core/reuse-strategy.ts`）、文件上传/图片上传组件、字典标签与字典管道、按钮级权限指令。
+> 当前 Angular 模板仅支持单表 CRUD（不含树表 / 主子表），树表与主子表仍使用 Vue 模板生成。
 
 ## 快速开始
 
@@ -99,85 +88,66 @@ RuoYi-Vue
 
 - JDK 17+、Maven 3.8+
 - MySQL 5.7/8.0、Redis 5+
-- Node.js 20.19+ / 22+（Angular 22 要求）、npm 10+
 
 ### 1. 初始化数据库
 
-1. 创建数据库 `ry-vue`（字符集 `utf8mb4`）。
-2. 依次执行 `sql/ry_*.sql`、`sql/quartz.sql`。
+```sql
+CREATE DATABASE `ry-vue` DEFAULT CHARACTER SET utf8mb4;
+```
 
-### 2. 启动后端
+依次执行 `sql/ry_*.sql`、`sql/quartz.sql`。
 
-修改 `ruoyi-admin/src/main/resources/application.yml` 中的数据库与 Redis 连接信息（Redis 配置在 `application-druid.yml`），然后：
+### 2. 配置并启动后端
+
+修改 `ruoyi-admin/src/main/resources/application.yml`（数据源、Redis、上传路径；Redis 在 `application-druid.yml` 中亦有相关配置），然后：
 
 ```bash
-mvn clean package            # 打包
+mvn clean package                        # 打包
 java -jar ruoyi-admin/target/ruoyi-admin.jar
 # 或直接运行 ruoyi-admin 模块下的 RuoYiApplication
 ```
 
-后端默认监听 `http://localhost:8080`。
+后端默认监听 `http://localhost:8080`，接口文档：`http://localhost:8080/swagger-ui.html`。
 
-### 3. 启动 Angular 前端
+### 3. 启动前端
 
 ```bash
+git clone https://github.com/bfu/inforstack-ng.git
 cd inforstack-ng
 npm install
-npm start          # ng serve，默认 http://localhost:4200
-```
-
-`/dev-api` 请求由 `proxy.conf.json` 反向代理到 `http://localhost:8080`，无需额外配置跨域。
-
-其他常用命令：
-
-```bash
-npm run build      # 生产构建，产物在 dist/
-npm test           # Vitest 单元测试
+npm start          # http://localhost:4200
 ```
 
 ### 默认账号
 
 `admin / admin123`
 
-## 开发约定
-
-- 全部使用**独立组件**：`@Component({ imports: [...] })`，不新建 NgModule；跨应用级 provider 统一在 `src/app/app.config.ts` 注册。
-- 组件模板与样式独立成文件：`templateUrl: './xxx.html'` + `styleUrl: './xxx.less'`（Less）。
-- `NzModalService` 已在 `app.config.ts` 通过 `importProvidersFrom(NzModalModule)` 注入根注入器，**不要删除或重复 provide**（拦截器依赖它）。
-- 编写 UI 前先查离线组件文档：`docs/ng-zorro/llms.txt` 定位组件起始行 → 按行区间读取 `docs/ng-zorro/llms-full.txt`，**禁止整文件读入上下文、禁止凭记忆编造 NG-ZORRO API**。
-
 ## 与官方 RuoYi-Vue 的差异
 
 | 维度 | 官方 RuoYi-Vue | 本项目 |
 | :--- | :--- | :--- |
-| 前端框架 | Vue 2 / Vue 3 | Angular 22（standalone） |
-| UI 库 | Element UI / Element Plus | NG-ZORRO 22 |
-| 构建工具 | Vite / Vue CLI | Angular CLI（esbuild） |
-| 状态管理 | Vuex / Pinia | RxJS Service 单例 |
-| 权限控制 | `v-hasPermi` 指令 | `*hasPermi` 结构型指令 |
-| 后端 | Spring Boot 2/3/4 | Spring Boot 4.1（接口未改动） |
-
-后端接口完全兼容官方版本，因此官方 Vue 前端与本项目 Angular 前端可共用同一套后端服务。
+| 后端 | Spring Boot 2/3 | Spring Boot 4.1（接口未改动） |
+| 前端 | Vue 2 / Vue 3 + Element | Angular 22 + NG-ZORRO（独立仓库 `inforstack-ng`） |
+| 代码生成 | Vue 模板 | 新增 Angular 模板（单表 CRUD） |
+| 仓库组织 | 前后端同仓 | 前后端分仓，接口契约保持一致 |
 
 ## 路线图
 
-- [x] 登录/注册、动态菜单路由、按钮级权限
-- [x] 系统管理 8 个模块、系统监控 7 个模块、系统工具 2 个模块
-- [ ] 表单构建器（在线构建器）
-- [ ] 案例演示页面（多 tab 组件示例）
-- [ ] 前端单元测试覆盖率补齐
-- [ ] 补充 Angular 版界面截图
+- [x] 后端升级至 Spring Boot 4.1，接口保持官方兼容
+- [x] Angular（NG-ZORRO）代码生成模板：单表 CRUD
+- [ ] Angular 模板支持树表与主子表
+- [ ] 补充 Docker Compose 一键启动（MySQL + Redis + 后端）
+- [ ] CI：后端 `mvn verify` 自动构建
 
 ## 开源协议
 
 本项目基于 [RuoYi-Vue](https://gitee.com/y_project/RuoYi-Vue) 二次开发，遵循原项目的 **MIT License**，详情见 [LICENSE](./LICENSE)。
 
-使用本项目请保留若依的版权声明与作者信息；若用于商业项目，请自行确认第三方依赖（NG-ZORRO、ECharts 等）的许可要求。
+使用本项目请保留若依的版权声明与作者信息。
 
 ## 致谢
 
 - [RuoYi-Vue](https://gitee.com/y_project/RuoYi-Vue)：后端与整体设计全部来源于若依开源项目。
-- [NG-ZORRO](https://ng.ant.design/)：Ant Design 的 Angular 实现。
-- [Angular](https://angular.dev/)、[ECharts](https://echarts.apache.org/)。
+- [NG-ZORRO](https://ng.ant.design/)、[Angular](https://angular.dev/)：前端实现基础。
 
-如果这个项目对你有帮助，欢迎点个 Star ⭐，也欢迎提交 Issue 与 PR 一起完善。
+如果这个项目对你有帮助，欢迎点个 Star ⭐，也欢迎提交 Issue 与 PR。
