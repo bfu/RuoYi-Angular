@@ -162,7 +162,7 @@ export class ${BusinessName}Page implements OnInit {
 #end
   });
 
-  readonly isEdit = computed(() => this.form.controls.${pkColumn.javaField}.value !== undefined);
+  readonly isEdit = computed(() => this.form.controls.${pkColumn.javaField}.value != null);
   readonly single = computed(() => this.checkedIds().size === 1);
   readonly multiple = computed(() => this.checkedIds().size > 0);
 #if(${dicts} != '')
