@@ -41,22 +41,20 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             script_id,
             slug,
             version,
-            <if test="content != null">content,</if>
-            <if test="status != null and status != ''">status,</if>
-            <if test="publishBy != null and publishBy != ''">publish_by,</if>
-            <if test="publishTime != null">publish_time,</if>
-            <if test="remark != null">remark,</if>
-            create_time
+            content,
+            status,
+            publish_by,
+            publish_time,
+            remark
         )values(
             #{scriptId},
             #{slug},
             #{version},
-            <if test="content != null">#{content},</if>
-            <if test="status != null and status != ''">#{status},</if>
-            <if test="publishBy != null and publishBy != ''">#{publishBy},</if>
-            <if test="publishTime != null">#{publishTime},</if>
-            <if test="remark != null">#{remark},</if>
-            sysdate()
+            #{content},
+            #{status},
+            #{publishBy},
+            #{publishTime},
+            #{remark}
         )
     </insert>
 
