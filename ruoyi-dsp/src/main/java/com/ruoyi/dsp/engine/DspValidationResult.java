@@ -16,7 +16,7 @@ public class DspValidationResult implements Serializable
     /** 是否校验通过 */
     private boolean valid = true;
 
-    /** 解析出的 namespace */
+    /** 运行时命名空间（由脚本 ID 生成） */
     private String namespace;
 
     /** 解析出的语句 id 集合 */

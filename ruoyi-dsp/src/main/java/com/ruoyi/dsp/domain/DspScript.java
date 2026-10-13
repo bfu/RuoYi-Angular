@@ -20,7 +20,7 @@ public class DspScript extends BaseEntity
     /** 脚本ID */
     private Long scriptId;
 
-    /** 唯一标识(slug)，亦作为 MyBatis namespace */
+    /** 唯一标识(slug)，对外执行入口按此定位（运行时 MyBatis namespace 取脚本ID） */
     @Excel(name = "脚本标识")
     private String slug;
 

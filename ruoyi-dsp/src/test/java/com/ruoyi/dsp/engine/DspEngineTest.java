@@ -31,16 +31,15 @@ import com.ruoyi.common.exception.ServiceException;
  */
 class DspEngineTest
 {
-    private static final String NAMESPACE = "demo_user";
+    /** 运行时 namespace：脚本 ID */
+    private static final String NAMESPACE = "12";
 
-    private static final String XML = "<!DOCTYPE mapper PUBLIC \"-//mybatis.org//DTD Mapper 3.0//EN\" \"http://mybatis.org/dtd/mybatis-3-mapper.dtd\">"
-            + "<mapper namespace=\"" + NAMESPACE + "\">"
-            + "<select id=\"selectAll\" resultType=\"map\">select id, name from demo_user order by id</select>"
+    /** 脚本内容仅需语句片段，XML 声明/DOCTYPE/mapper 包装由平台生成 */
+    private static final String XML = "<select id=\"selectAll\" resultType=\"map\">select id, name from demo_user order by id</select>"
             + "<select id=\"selectById\" parameterType=\"long\" resultType=\"map\">select id, name from demo_user where id = #{id}</select>"
             + "<insert id=\"insertUser\">insert into demo_user(id, name) values(#{id}, #{name})</insert>"
             + "<update id=\"updateName\">update demo_user set name = #{name} where id = #{id}</update>"
-            + "<delete id=\"deleteUser\">delete from demo_user where id = #{id}</delete>"
-            + "</mapper>";
+            + "<delete id=\"deleteUser\">delete from demo_user where id = #{id}</delete>";
 
     private DspEngine engine;
 
@@ -137,6 +136,28 @@ class DspEngineTest
     {
         engine.register(NAMESPACE, XML);
         assertThrows(ServiceException.class, () -> engine.execute(NAMESPACE, "missing", null, false));
+    }
+
+    @Test
+    void contentWithoutStatementThrows()
+    {
+        // 仅有历史 mapper 包装、无语句时，注册应快速失败而不是静默加载 0 条语句
+        assertThrows(ServiceException.class,
+                () -> engine.register(NAMESPACE, "<mapper namespace=\"legacy\"></mapper>"));
+        assertFalse(engine.hasNamespace(NAMESPACE));
+    }
+
+    @Test
+    void legacyWrappedContentStillRegisters()
+    {
+        String legacy = "<!DOCTYPE mapper PUBLIC \"-//mybatis.org//DTD Mapper 3.0//EN\" "
+                + "\"http://mybatis.org/dtd/mybatis-3-mapper.dtd\">"
+                + "<mapper namespace=\"legacy_slug\"><select id=\"selectAll\" resultType=\"map\">"
+                + "select id, name from demo_user order by id</select></mapper>";
+        engine.register(NAMESPACE, legacy);
+
+        DspExecutionResult result = engine.execute(NAMESPACE, "selectAll", null, false);
+        assertEquals(1, result.getRows().size());
     }
 
     @Test

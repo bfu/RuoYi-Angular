@@ -10,10 +10,10 @@
 drop table if exists dsp_script;
 create table dsp_script (
   script_id       bigint(20)      not null auto_increment    comment '脚本ID',
-  slug            varchar(128)    not null                   comment '唯一标识(slug)，亦作为 MyBatis namespace',
+  slug            varchar(128)    not null                   comment '唯一标识(slug)，对外执行入口定位（运行时 namespace 取脚本ID）',
   name            varchar(128)    not null                   comment '脚本名称',
   description     varchar(500)    default ''                 comment '脚本描述',
-  content         longtext                                   comment '草稿 XML 内容',
+  content         longtext                                   comment '草稿语句片段（xml 声明/DOCTYPE/mapper 包装由后端补全）',
   current_version int(11)         default 0                  comment '当前已发布版本号(0=未发布)',
   status          char(1)         default '0'                comment '状态(0草稿 1已发布 2已下线)',
   create_by       varchar(64)     default ''                 comment '创建者',
@@ -32,9 +32,9 @@ drop table if exists dsp_script_version;
 create table dsp_script_version (
   version_id   bigint(20)      not null auto_increment    comment '版本ID',
   script_id    bigint(20)      not null                   comment '脚本ID',
-  slug         varchar(128)    not null                   comment '脚本slug(冗余，便于运行时加载)',
+  slug         varchar(128)    not null                   comment '脚本slug(冗余，便于版本查询)',
   version      int(11)         not null                   comment '版本号',
-  content      longtext                                   comment '发布时 XML 内容快照',
+  content      longtext                                   comment '发布时语句片段快照',
   status       char(1)         default '0'                comment '状态(0历史版本 1当前版本)',
   publish_by   varchar(64)     default ''                 comment '发布者',
   publish_time datetime                                   comment '发布时间',

@@ -1,17 +1,11 @@
 package com.ruoyi.dsp.engine;
 
 import java.io.StringReader;
-import java.io.StringWriter;
 import java.util.Map;
 import java.util.regex.Pattern;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.transform.OutputKeys;
-import javax.xml.transform.Transformer;
-import javax.xml.transform.TransformerFactory;
-import javax.xml.transform.dom.DOMSource;
-import javax.xml.transform.stream.StreamResult;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.SqlSessionFactory;
@@ -24,14 +18,15 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
-import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.utils.StringUtils;
 
 /**
  * 动态脚本校验器
  * <p>
- * 负责：XML 合法性、根节点与 namespace 约定、语句声明完整性，以及基于临时
- * {@link Configuration} 的 MyBatis 语义校验；校验过程不污染运行中的主配置。
+ * 脚本内容仅需编写语句片段（{@code <select>/<insert>/<update>/<delete>} 等），
+ * XML 声明、DOCTYPE 与 {@code <mapper>} 包装由平台统一生成，并以脚本 ID 作为 namespace。
+ * 本类负责：XML 合法性、语句声明完整性，以及基于临时 {@link Configuration} 的
+ * MyBatis 语义校验；校验过程不污染运行中的主配置。
  *
  * @author ruoyi
  */
@@ -41,14 +36,21 @@ public class DspValidator
     private static final Logger log = LoggerFactory.getLogger(DspValidator.class);
 
     /**
-     * MyBatis 解析 Mapper XML 依赖 DOCTYPE 定位 DTD（内部本地解析，不访问外网），
-     * 缺失时解析会抛出晦涩的 Xerces 异常，故在此提前给出可读提示。
+     * MyBatis Mapper 固定头部（XML 声明 + DOCTYPE），由平台生成。
+     * MyBatis 依赖 DOCTYPE 定位本地 DTD（内部解析，不访问外网）。
      */
-    private static final Pattern DOCTYPE_PATTERN = Pattern.compile("<!DOCTYPE\\s+mapper", Pattern.CASE_INSENSITIVE);
-
-    private static final String DOCTYPE_HINT = "缺少 MyBatis Mapper DOCTYPE 声明，请在 <mapper> 前添加："
+    private static final String MAPPER_PROLOG = "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n"
             + "<!DOCTYPE mapper PUBLIC \"-//mybatis.org//DTD Mapper 3.0//EN\" "
-            + "\"http://mybatis.org/dtd/mybatis-3-mapper.dtd\">";
+            + "\"http://mybatis.org/dtd/mybatis-3-mapper.dtd\">\n";
+
+    /** 历史内容或手工粘贴的 XML 声明、DOCTYPE、{@code <mapper>} 包装，加载前自动剥离 */
+    private static final Pattern XML_DECLARATION = Pattern.compile("(?is)^\\s*<\\?xml.*?\\?>");
+
+    private static final Pattern DOCTYPE_DECLARATION = Pattern.compile("(?is)<!DOCTYPE[^>]*>");
+
+    private static final Pattern MAPPER_OPEN_TAG = Pattern.compile("(?is)^\\s*<mapper\\b[^>]*>");
+
+    private static final Pattern MAPPER_CLOSE_TAG = Pattern.compile("(?is)</mapper\\s*>\\s*$");
 
     /** 运行中的 MyBatis 配置，用于复用类型别名等元信息 */
     private final Configuration liveConfiguration;
@@ -59,26 +61,90 @@ public class DspValidator
     }
 
     /**
+     * 由脚本 ID 生成运行时 namespace
+     */
+    public static String namespaceOf(Long scriptId)
+    {
+        return scriptId == null ? "" : String.valueOf(scriptId);
+    }
+
+    /**
+     * 剥离 XML 声明、DOCTYPE 与 {@code <mapper>} 包装，仅保留语句片段
+     */
+    public static String unwrap(String content)
+    {
+        if (StringUtils.isBlank(content))
+        {
+            return "";
+        }
+        String body = XML_DECLARATION.matcher(content).replaceFirst("");
+        body = DOCTYPE_DECLARATION.matcher(body).replaceAll("");
+        body = MAPPER_OPEN_TAG.matcher(body).replaceFirst("");
+        body = MAPPER_CLOSE_TAG.matcher(body).replaceFirst("");
+        return body.trim();
+    }
+
+    /**
+     * 内容中是否残留平台不再需要的包装（用于给出提示）
+     */
+    public static boolean hasWrapper(String content)
+    {
+        if (StringUtils.isBlank(content))
+        {
+            return false;
+        }
+        return XML_DECLARATION.matcher(content).lookingAt()
+                || DOCTYPE_DECLARATION.matcher(content).find()
+                || MAPPER_OPEN_TAG.matcher(content).lookingAt();
+    }
+
+    /**
+     * 将语句片段包装为合法的 Mapper XML
+     *
+     * @param namespace 运行时 namespace（脚本 ID）
+     * @param content   语句片段（可含历史包装，自动剥离）
+     */
+    public static String wrap(String namespace, String content)
+    {
+        return MAPPER_PROLOG + "<mapper namespace=\"" + namespace + "\">\n" + unwrap(content) + "\n</mapper>";
+    }
+
+    /**
      * 校验脚本内容
      *
-     * @param slug 脚本标识（应等于 XML 的 namespace）
-     * @param xml  脚本内容
+     * @param scriptId 脚本 ID（作为运行时 namespace）
+     * @param content  语句片段
      * @return 校验结果
      */
-    public DspValidationResult validate(String slug, String xml)
+    public DspValidationResult validate(Long scriptId, String content)
     {
         DspValidationResult result = new DspValidationResult();
-        if (StringUtils.isBlank(xml))
+        if (scriptId == null)
         {
-            result.addError("XML 内容为空");
+            result.addError("脚本 ID 不能为空");
+            return result;
+        }
+        if (StringUtils.isBlank(content))
+        {
+            result.addError("脚本内容为空");
             return result;
         }
 
-        if (!DOCTYPE_PATTERN.matcher(xml).find())
+        String namespace = namespaceOf(scriptId);
+        result.setNamespace(namespace);
+        if (hasWrapper(content))
         {
-            result.addError(DOCTYPE_HINT);
+            result.addWarning("已自动忽略 <?xml>、DOCTYPE 与 <mapper> 包装，仅需编写 <select>/<insert>/<update>/<delete> 语句");
         }
 
+        String body = unwrap(content);
+        if (StringUtils.isBlank(body))
+        {
+            result.addError("未找到任何 <select>/<insert>/<update>/<delete> 语句");
+            return result;
+        }
+
+        String xml = wrap(namespace, body);
         Document document;
         try
         {
@@ -91,32 +157,13 @@ public class DspValidator
         }
 
         Element root = document.getDocumentElement();
-        if (root == null || !"mapper".equalsIgnoreCase(root.getNodeName()))
-        {
-            result.addError("根节点必须为 <mapper>");
-            return result;
-        }
-
-        String namespace = root.getAttribute("namespace");
-        if (StringUtils.isBlank(namespace))
-        {
-            result.addError("<mapper> 缺少 namespace 属性");
-            return result;
-        }
-        result.setNamespace(namespace);
-        if (!namespace.equals(slug))
-        {
-            result.addError("namespace 必须与脚本标识一致（当前 namespace=\"" + namespace + "\"，slug=\"" + slug + "\"）");
-            return result;
-        }
-
         collectStatements(root, result);
         if (result.getStatements().isEmpty())
         {
             result.addError("未找到任何 <select>/<insert>/<update>/<delete> 语句");
         }
 
-        if (xml.contains("${"))
+        if (content.contains("${"))
         {
             result.addWarning("检测到 ${} 原始拼接，存在 SQL 注入风险，请确认参数来源可信");
         }
@@ -126,7 +173,7 @@ public class DspValidator
         {
             Configuration scratch = newScratchConfiguration();
             XMLMapperBuilder builder = new XMLMapperBuilder(new StringReader(xml), scratch,
-                    slug + "-validate.xml", scratch.getSqlFragments());
+                    namespace + "-validate.xml", scratch.getSqlFragments());
             builder.parse();
         }
         catch (Exception e)
@@ -134,47 +181,6 @@ public class DspValidator
             result.addError("MyBatis 解析失败：" + rootMessage(e));
         }
         return result;
-    }
-
-    /**
-     * 将 XML 根节点的 namespace 重写为指定值，用于测试隔离（临时命名空间）
-     */
-    public String normalizeNamespace(String xml, String namespace)
-    {
-        try
-        {
-            Document document = parseXml(xml);
-            Element root = document.getDocumentElement();
-            if (root == null)
-            {
-                throw new ServiceException("XML 缺少根节点");
-            }
-            root.setAttribute("namespace", namespace);
-            TransformerFactory transformerFactory = TransformerFactory.newInstance();
-            try
-            {
-                transformerFactory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
-                transformerFactory.setAttribute(XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "");
-            }
-            catch (Exception ignore)
-            {
-                // 部分实现不支持该属性，忽略
-            }
-            Transformer transformer = transformerFactory.newTransformer();
-            transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes");
-            transformer.setOutputProperty(OutputKeys.INDENT, "no");
-            StringWriter writer = new StringWriter();
-            transformer.transform(new DOMSource(document), new StreamResult(writer));
-            return writer.toString();
-        }
-        catch (ServiceException e)
-        {
-            throw e;
-        }
-        catch (Exception e)
-        {
-            throw new ServiceException("重写 namespace 失败：" + rootMessage(e));
-        }
     }
 
     /**

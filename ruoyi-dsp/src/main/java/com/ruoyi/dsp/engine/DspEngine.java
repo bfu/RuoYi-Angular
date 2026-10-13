@@ -58,16 +58,16 @@ public class DspEngine
     /**
      * 注册（或覆盖）指定 namespace 的脚本语句
      *
-     * @param namespace  命名空间（即脚本 slug）
-     * @param xmlContent Mapper XML 内容
+     * @param namespace  命名空间（即脚本 ID，由 {@link DspValidator#namespaceOf(Long)} 生成）
+     * @param content    语句片段（XML 声明、DOCTYPE 与 mapper 包装由平台统一生成）
      */
-    public synchronized void register(String namespace, String xmlContent)
+    public synchronized void register(String namespace, String content)
     {
         if (StringUtils.isBlank(namespace))
         {
             throw new ServiceException("namespace 不能为空");
         }
-        if (StringUtils.isBlank(xmlContent))
+        if (StringUtils.isBlank(content))
         {
             throw new ServiceException("脚本内容为空，无法加载：" + namespace);
         }
@@ -75,20 +75,26 @@ public class DspEngine
         unregister(namespace);
         // 使用唯一资源名，绕过 XMLMapperBuilder 的 loadedResource 去重
         String resource = namespace + "-" + System.nanoTime() + ".xml";
+        String xmlContent = DspValidator.wrap(namespace, content);
         try
         {
             XMLMapperBuilder builder = new XMLMapperBuilder(new StringReader(xmlContent), configuration, resource,
                     configuration.getSqlFragments());
             builder.parse();
-            int count = countStatements(namespace);
-            loadedNamespaces.put(namespace, count);
-            log.info("动态脚本已加载 namespace={}, statements={}", namespace, count);
         }
         catch (Exception e)
         {
             log.error("动态脚本加载失败 namespace={}", namespace, e);
             throw new ServiceException("动态脚本加载失败：" + rootMessage(e));
         }
+        int count = countStatements(namespace);
+        if (count == 0)
+        {
+            unregister(namespace);
+            throw new ServiceException("脚本未解析出可执行语句，请检查 <select>/<insert>/<update>/<delete> 标签：" + namespace);
+        }
+        loadedNamespaces.put(namespace, count);
+        log.info("动态脚本已加载 namespace={}, statements={}", namespace, count);
     }
 
     /**
@@ -163,7 +169,7 @@ public class DspEngine
     /**
      * 执行脚本语句
      *
-     * @param namespace   命名空间（脚本 slug）
+     * @param namespace   命名空间（脚本 ID）
      * @param statementId 语句 id
      * @param params      参数
      * @param rollback    是否事务回滚预览
