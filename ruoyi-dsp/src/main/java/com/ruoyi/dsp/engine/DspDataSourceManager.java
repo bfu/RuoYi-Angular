@@ -2,6 +2,7 @@ package com.ruoyi.dsp.engine;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.SQLException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.sql.DataSource;
@@ -195,6 +196,21 @@ public class DspDataSourceManager
                 pool.close();
             }
         }
+    }
+
+    /**
+     * 打开指定数据源的一条连接（供元数据探测等只读场景使用），由调用方负责关闭
+     * <p>
+     * 默认库复用 Spring 主数据源；其余数据源按需懒加载运行时连接池并缓存。
+     */
+    public Connection openConnection(Long dataSourceId) throws SQLException
+    {
+        DataSource dataSource = resolve(dataSourceId).getDataSource();
+        if (dataSource == null)
+        {
+            dataSource = liveConfiguration.getEnvironment().getDataSource();
+        }
+        return dataSource.getConnection();
     }
 
     /**
