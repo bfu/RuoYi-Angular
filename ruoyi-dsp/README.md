@@ -72,3 +72,48 @@ Content-Type: application/json
 
 约定：`select` 返回 `rows`（每行为 Map，键为数据库原始列名，因 `mapUnderscoreToCamelCase=false`）；
 `insert/update/delete` 返回 `affectedRows`。`#{}` 由 MyBatis 预编译，`${}` 存在注入风险（校验阶段告警）。
+
+## 编写规范
+
+1. 根节点必须是 `<mapper>`，且 `namespace` 必须与脚本 `slug` 完全一致（平台以 slug 作为 namespace 定位语句）。
+2. **必须包含 MyBatis Mapper DOCTYPE 声明**，否则 MyBatis 解析失败；平台会在校验时给出明确提示：
+
+   ```xml
+   <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+   ```
+
+3. `<select>` 必须显式声明 `resultType` 或 `resultMap`（结果集默认使用 `map`）。
+4. 每个 `<select>/<insert>/<update>/<delete>` 需有唯一 `id`，执行时按 `statementId` 定位。
+5. `#{}` 为预编译占位（推荐）；`${}` 为原始拼接，存在注入风险，平台会在校验阶段告警。
+
+## 管理端接口
+
+| 方法 | 路径 | 说明 |
+| ---- | ---- | ---- |
+| GET | `/dsp/script/list` | 脚本分页列表 |
+| GET | `/dsp/script/{scriptId}` | 脚本详情（含草稿内容） |
+| POST | `/dsp/script` | 新增脚本 |
+| PUT | `/dsp/script` | 修改脚本（保存草稿） |
+| DELETE | `/dsp/script/{scriptIds}` | 删除脚本 |
+| POST | `/dsp/script/validate` | 校验（`{scriptId, content?}`） |
+| POST | `/dsp/script/test` | 事务回滚测试（`{scriptId, statementId, params}`） |
+| POST | `/dsp/script/publish` | 发布（`{scriptId}`） |
+| POST | `/dsp/script/rollback` | 回滚（`{scriptId, versionId}`） |
+| POST | `/dsp/script/offline` | 下线（`{scriptId}`） |
+| POST | `/dsp/script/reload` | 重新加载全部已发布脚本 |
+| GET | `/dsp/script/versions/{scriptId}` | 版本列表 |
+| GET | `/dsp/script/version/{versionId}` | 版本详情（含内容快照） |
+
+## 构建与测试
+
+```bash
+# 后端（RuoYi-Angular 根目录）
+mvn -pl ruoyi-dsp -am test
+
+# 前端（inforstack-ng 目录）
+npm run build
+npm test
+```
+
+> 动态加载与执行的核心逻辑由 `DspEngineTest`（H2 内存库，覆盖注册/执行/事务回滚/重复发布）与
+> `DspValidatorTest`（纯解析，覆盖 DOCTYPE/namespace/resultType 校验）保障。

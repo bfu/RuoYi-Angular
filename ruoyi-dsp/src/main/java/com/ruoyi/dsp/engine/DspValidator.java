@@ -3,6 +3,7 @@ package com.ruoyi.dsp.engine;
 import java.io.StringReader;
 import java.io.StringWriter;
 import java.util.Map;
+import java.util.regex.Pattern;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -39,6 +40,16 @@ public class DspValidator
 {
     private static final Logger log = LoggerFactory.getLogger(DspValidator.class);
 
+    /**
+     * MyBatis 解析 Mapper XML 依赖 DOCTYPE 定位 DTD（内部本地解析，不访问外网），
+     * 缺失时解析会抛出晦涩的 Xerces 异常，故在此提前给出可读提示。
+     */
+    private static final Pattern DOCTYPE_PATTERN = Pattern.compile("<!DOCTYPE\\s+mapper", Pattern.CASE_INSENSITIVE);
+
+    private static final String DOCTYPE_HINT = "缺少 MyBatis Mapper DOCTYPE 声明，请在 <mapper> 前添加："
+            + "<!DOCTYPE mapper PUBLIC \"-//mybatis.org//DTD Mapper 3.0//EN\" "
+            + "\"http://mybatis.org/dtd/mybatis-3-mapper.dtd\">";
+
     /** 运行中的 MyBatis 配置，用于复用类型别名等元信息 */
     private final Configuration liveConfiguration;
 
@@ -61,6 +72,11 @@ public class DspValidator
         {
             result.addError("XML 内容为空");
             return result;
+        }
+
+        if (!DOCTYPE_PATTERN.matcher(xml).find())
+        {
+            result.addError(DOCTYPE_HINT);
         }
 
         Document document;
