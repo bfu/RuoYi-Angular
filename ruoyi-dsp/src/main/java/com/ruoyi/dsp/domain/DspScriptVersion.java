@@ -29,6 +29,9 @@ public class DspScriptVersion extends BaseEntity
     /** 发布时 XML 内容快照 */
     private String content;
 
+    /** 发布时绑定的数据源ID(0=默认主库) */
+    private Long dataSourceId;
+
     /** 状态(0历史版本 1当前版本) */
     private String status;
 
@@ -88,6 +91,16 @@ public class DspScriptVersion extends BaseEntity
         this.content = content;
     }
 
+    public Long getDataSourceId()
+    {
+        return dataSourceId;
+    }
+
+    public void setDataSourceId(Long dataSourceId)
+    {
+        this.dataSourceId = dataSourceId;
+    }
+
     public String getStatus()
     {
         return status;
@@ -126,6 +139,7 @@ public class DspScriptVersion extends BaseEntity
             .append("scriptId", getScriptId())
             .append("slug", getSlug())
             .append("version", getVersion())
+            .append("dataSourceId", getDataSourceId())
             .append("status", getStatus())
             .append("publishBy", getPublishBy())
             .append("publishTime", getPublishTime())

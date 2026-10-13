@@ -145,6 +145,8 @@ public class DspScriptServiceImpl implements IDspScriptService
             // 先在新数据源注册成功，再卸载旧数据源：注册失败会抛异常回滚事务，旧数据源语句保持可用
             dspEngine.register(newDataSourceId, namespaceOf(exist), exist.getSlug(), exist.getContent());
             dspEngine.unregister(oldDataSourceId, namespaceOf(exist));
+            // 当前版本快照同步为运行时数据源，保证「回滚到当前版本」是幂等的
+            dspScriptVersionMapper.updateCurrentVersionDataSourceId(exist.getScriptId(), newDataSourceId);
             releaseDataSourceIfIdle(oldDataSourceId);
         }
         return rows;
@@ -273,6 +275,8 @@ public class DspScriptServiceImpl implements IDspScriptService
         version.setSlug(script.getSlug());
         version.setVersion(newVersion);
         version.setContent(script.getContent());
+        // 版本快照同时记录发布时绑定的数据源，回滚时一并还原
+        version.setDataSourceId(dataSourceId);
         version.setStatus(STATUS_PUBLISHED);
         version.setPublishBy(operator);
         version.setPublishTime(DateUtils.getNowDate());
@@ -310,8 +314,10 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             throw new ServiceException("目标版本内容校验未通过：" + String.join("；", validation.getErrors()));
         }
-        Long dataSourceId = normalizeDataSourceId(script.getDataSourceId());
-        checkDataSourceUsable(dataSourceId);
+        // 回滚即还原该版本发布时的完整状态：内容 + 数据源
+        Long currentDataSourceId = normalizeDataSourceId(script.getDataSourceId());
+        Long targetDataSourceId = normalizeDataSourceId(version.getDataSourceId());
+        checkDataSourceUsable(targetDataSourceId);
         dspScriptVersionMapper.updateVersionStatusByScriptId(scriptId, "0");
         dspScriptVersionMapper.markVersionCurrent(versionId);
 
@@ -319,11 +325,18 @@ public class DspScriptServiceImpl implements IDspScriptService
         update.setScriptId(scriptId);
         update.setContent(version.getContent());
         update.setCurrentVersion(version.getVersion());
+        update.setDataSourceId(targetDataSourceId);
         update.setStatus(STATUS_PUBLISHED);
         update.setUpdateBy(operator);
         dspScriptMapper.updateDspScript(update);
 
-        dspEngine.register(dataSourceId, namespaceOf(script), script.getSlug(), version.getContent());
+        // 先注册到目标版本的数据源（同库时为覆盖注册），事务成功后再卸载原数据源
+        dspEngine.register(targetDataSourceId, namespaceOf(script), script.getSlug(), version.getContent());
+        if (!targetDataSourceId.equals(currentDataSourceId))
+        {
+            dspEngine.unregister(currentDataSourceId, namespaceOf(script));
+            releaseDataSourceIfIdle(currentDataSourceId);
+        }
         return version.getVersion();
     }
 

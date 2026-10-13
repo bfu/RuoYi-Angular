@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -23,8 +24,10 @@ import com.ruoyi.common.core.domain.model.LoginUser;
 import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.dsp.domain.DspDataSource;
 import com.ruoyi.dsp.domain.DspScript;
+import com.ruoyi.dsp.domain.DspScriptVersion;
 import com.ruoyi.dsp.engine.DspDataSourceManager;
 import com.ruoyi.dsp.engine.DspEngine;
+import com.ruoyi.dsp.engine.DspValidationResult;
 import com.ruoyi.dsp.engine.DspValidator;
 import com.ruoyi.dsp.mapper.DspDataSourceMapper;
 import com.ruoyi.dsp.mapper.DspScriptMapper;
@@ -46,12 +49,19 @@ class DspScriptServiceImplTest
 
     private static final String CONTENT = "<select resultType=\"map\">select 1</select>";
 
+    /** 历史版本 v1 的内容 */
+    private static final String V1_CONTENT = "<select resultType=\"map\">select 2</select>";
+
     /** 运行时数据源ID（启用） */
     private static final Long RUNTIME_DS = 9L;
 
     private DspScriptMapper dspScriptMapper;
 
+    private DspScriptVersionMapper dspScriptVersionMapper;
+
     private DspDataSourceMapper dspDataSourceMapper;
+
+    private DspValidator dspValidator;
 
     private DspEngine dspEngine;
 
@@ -63,14 +73,17 @@ class DspScriptServiceImplTest
     void setUp()
     {
         dspScriptMapper = mock(DspScriptMapper.class);
+        dspScriptVersionMapper = mock(DspScriptVersionMapper.class);
         dspDataSourceMapper = mock(DspDataSourceMapper.class);
+        dspValidator = mock(DspValidator.class);
         dspEngine = mock(DspEngine.class);
         dspDataSourceManager = mock(DspDataSourceManager.class);
+        when(dspValidator.validate(anyLong(), any(), any())).thenReturn(new DspValidationResult());
         service = new DspScriptServiceImpl();
         ReflectionTestUtils.setField(service, "dspScriptMapper", dspScriptMapper);
-        ReflectionTestUtils.setField(service, "dspScriptVersionMapper", mock(DspScriptVersionMapper.class));
+        ReflectionTestUtils.setField(service, "dspScriptVersionMapper", dspScriptVersionMapper);
         ReflectionTestUtils.setField(service, "dspDataSourceMapper", dspDataSourceMapper);
-        ReflectionTestUtils.setField(service, "dspValidator", mock(DspValidator.class));
+        ReflectionTestUtils.setField(service, "dspValidator", dspValidator);
         ReflectionTestUtils.setField(service, "dspEngine", dspEngine);
         ReflectionTestUtils.setField(service, "dspDataSourceManager", dspDataSourceManager);
         // 保存脚本需要登录用户
@@ -184,6 +197,112 @@ class DspScriptServiceImplTest
         // 草稿不触发引擎换绑
         verify(dspEngine, never()).register(any(), any(), any(), any());
         verify(dspEngine, never()).unregister(any(), any());
+    }
+
+    @Test
+    void publishSnapshotsDataSourceIntoVersion()
+    {
+        DspScript draft = publishedScript(RUNTIME_DS);
+        draft.setStatus("0");
+        draft.setCurrentVersion(0);
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(draft);
+        when(dspDataSourceMapper.selectDspDataSourceById(RUNTIME_DS)).thenReturn(dataSource(RUNTIME_DS, "报表库", "0"));
+
+        assertEquals(1, service.publish(SCRIPT_ID, "admin"));
+
+        ArgumentCaptor<DspScriptVersion> captor = ArgumentCaptor.forClass(DspScriptVersion.class);
+        verify(dspScriptVersionMapper).insertVersion(captor.capture());
+        // 版本快照需记录发布时绑定的数据源
+        assertEquals(RUNTIME_DS, captor.getValue().getDataSourceId());
+        assertEquals(CONTENT, captor.getValue().getContent());
+        verify(dspEngine).register(RUNTIME_DS, String.valueOf(SCRIPT_ID), SLUG, CONTENT);
+    }
+
+    @Test
+    void rebindSyncsCurrentVersionDataSource()
+    {
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(publishedScript(0L));
+        when(dspDataSourceMapper.selectDspDataSourceById(RUNTIME_DS)).thenReturn(dataSource(RUNTIME_DS, "报表库", "0"));
+
+        service.updateDspScript(rebindPayload(RUNTIME_DS));
+
+        // 当前版本快照同步为运行时数据源，保证回滚到当前版本是幂等的
+        verify(dspScriptVersionMapper).updateCurrentVersionDataSourceId(SCRIPT_ID, RUNTIME_DS);
+    }
+
+    @Test
+    void rollbackRestoresContentAndDataSourceOfTargetVersion()
+    {
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(publishedScript(0L));
+        when(dspScriptVersionMapper.selectVersionById(11L)).thenReturn(version(11L, 1, V1_CONTENT, RUNTIME_DS));
+        when(dspDataSourceMapper.selectDspDataSourceById(RUNTIME_DS)).thenReturn(dataSource(RUNTIME_DS, "报表库", "0"));
+
+        assertEquals(1, service.rollback(SCRIPT_ID, 11L, "admin"));
+
+        ArgumentCaptor<DspScript> captor = ArgumentCaptor.forClass(DspScript.class);
+        verify(dspScriptMapper).updateDspScript(captor.capture());
+        assertEquals(RUNTIME_DS, captor.getValue().getDataSourceId());
+        assertEquals(V1_CONTENT, captor.getValue().getContent());
+        verify(dspScriptVersionMapper).markVersionCurrent(11L);
+        // 先注册到版本绑定的数据源，再卸载原默认库
+        InOrder order = inOrder(dspEngine);
+        order.verify(dspEngine).register(RUNTIME_DS, String.valueOf(SCRIPT_ID), SLUG, V1_CONTENT);
+        order.verify(dspEngine).unregister(0L, String.valueOf(SCRIPT_ID));
+    }
+
+    @Test
+    void rollbackWithinSameDataSourceDoesNotUnregister()
+    {
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(publishedScript(RUNTIME_DS));
+        when(dspScriptVersionMapper.selectVersionById(11L)).thenReturn(version(11L, 1, V1_CONTENT, RUNTIME_DS));
+        when(dspDataSourceMapper.selectDspDataSourceById(RUNTIME_DS)).thenReturn(dataSource(RUNTIME_DS, "报表库", "0"));
+
+        service.rollback(SCRIPT_ID, 11L, "admin");
+
+        verify(dspEngine).register(RUNTIME_DS, String.valueOf(SCRIPT_ID), SLUG, V1_CONTENT);
+        verify(dspEngine, never()).unregister(any(), any());
+        verify(dspDataSourceManager, never()).evict(anyLong());
+    }
+
+    @Test
+    void rollbackToVersionWithDisabledDataSourceIsRejectedBeforeAnyMutation()
+    {
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(publishedScript(0L));
+        when(dspScriptVersionMapper.selectVersionById(11L)).thenReturn(version(11L, 1, V1_CONTENT, RUNTIME_DS));
+        when(dspDataSourceMapper.selectDspDataSourceById(RUNTIME_DS)).thenReturn(dataSource(RUNTIME_DS, "停用库", "1"));
+
+        ServiceException exception = assertThrows(ServiceException.class,
+                () -> service.rollback(SCRIPT_ID, 11L, "admin"));
+
+        assertTrue(exception.getMessage().contains("已停用"));
+        verify(dspScriptMapper, never()).updateDspScript(any());
+        verify(dspScriptVersionMapper, never()).markVersionCurrent(anyLong());
+        verify(dspEngine, never()).register(any(), any(), any(), any());
+        verify(dspEngine, never()).unregister(any(), any());
+    }
+
+    @Test
+    void rollbackToUnknownVersionIsRejected()
+    {
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(publishedScript(0L));
+        when(dspScriptVersionMapper.selectVersionById(99L)).thenReturn(null);
+
+        assertThrows(ServiceException.class, () -> service.rollback(SCRIPT_ID, 99L, "admin"));
+
+        verify(dspScriptMapper, never()).updateDspScript(any());
+    }
+
+    private DspScriptVersion version(Long versionId, int versionNo, String content, Long dataSourceId)
+    {
+        DspScriptVersion version = new DspScriptVersion();
+        version.setVersionId(versionId);
+        version.setScriptId(SCRIPT_ID);
+        version.setSlug(SLUG);
+        version.setVersion(versionNo);
+        version.setContent(content);
+        version.setDataSourceId(dataSourceId);
+        version.setStatus("0");
+        return version;
     }
 
     private DspScript publishedScript(Long dataSourceId)

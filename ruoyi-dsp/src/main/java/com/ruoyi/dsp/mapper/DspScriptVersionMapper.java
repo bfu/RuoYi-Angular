@@ -42,6 +42,11 @@ public interface DspScriptVersionMapper
     int markVersionCurrent(Long versionId);
 
     /**
+     * 更新脚本当前版本绑定的数据源（已发布脚本换绑后，令当前版本快照与运行时一致）
+     */
+    int updateCurrentVersionDataSourceId(@Param("scriptId") Long scriptId, @Param("dataSourceId") Long dataSourceId);
+
+    /**
      * 删除脚本的全部版本
      */
     int deleteVersionByScriptId(Long scriptId);
