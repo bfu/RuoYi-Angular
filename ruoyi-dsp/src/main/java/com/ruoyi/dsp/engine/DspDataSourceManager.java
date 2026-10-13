@@ -42,10 +42,25 @@ public class DspDataSourceManager
     /** 状态：正常 */
     private static final String STATUS_NORMAL = "0";
 
-    /** 运行时数据源默认连接池参数（按任意驱动设计，不强制校验语句） */
+    /** 运行时数据源默认连接池参数（按任意驱动设计，不依赖方言校验语句） */
+    private static final int POOL_MIN_IDLE = 1;
+
     private static final int POOL_MAX_ACTIVE = 8;
 
-    private static final int POOL_MAX_WAIT_MILLIS = 60000;
+    /** 取连接的最长等待：库不可用时快速失败，不让请求长时间挂起 */
+    private static final int POOL_MAX_WAIT_MILLIS = 10000;
+
+    /** 探活超时（秒），用于 Connection.isValid */
+    private static final int VALIDATION_QUERY_TIMEOUT_SECONDS = 3;
+
+    /** 空闲检测线程运行间隔 */
+    private static final long EVICTION_RUN_INTERVAL_MILLIS = 30000L;
+
+    /** 空闲连接可被回收前的最短闲置时间（配合 keepAlive，minIdle 以内的连接改为探活保活） */
+    private static final long MIN_EVICTABLE_IDLE_MILLIS = 120000L;
+
+    /** keepAlive 探活间隔，需不小于空闲检测间隔 */
+    private static final long KEEP_ALIVE_BETWEEN_MILLIS = 60000L;
 
     /** 运行中主配置，用于复制类型别名等元信息 */
     private final Configuration liveConfiguration;
@@ -260,7 +275,17 @@ public class DspDataSourceManager
     }
 
     /**
-     * 构建 Druid 连接池（不预先建连，未启用校验语句，兼容任意驱动）
+     * 构建 Druid 连接池
+     * <p>
+     * 存活校验统一走 JDBC4 {@link Connection#isValid(int)}（{@link DspJdbc4ValidConnectionChecker}），
+     * 不需要方言相关的校验语句，因此在「允许任意 driver」的前提下也能开启探活：
+     * <ul>
+     * <li>{@code testOnBorrow}：借出前探活。陈旧连接被丢弃并重建，用户不再遇到「长时间无请求后首次请求报错」</li>
+     * <li>{@code testWhileIdle + keepAlive + minIdle}：保留少量热连接并周期探活，避免连接被防火墙静默回收，
+     * 也省去首次请求的建连延迟；超出 minIdle 的空闲连接仍会按 {@code minEvictableIdleTimeMillis} 释放</li>
+     * <li>{@link DspExceptionSorter}：误漏的失效连接在报错时被剔除，不会被反复借出</li>
+     * <li>{@code initialSize=0}：仍按需懒建连，数据源不可达不阻塞应用启动</li>
+     * </ul>
      */
     private DruidDataSource createPool(DspDataSource config)
     {
@@ -272,16 +297,24 @@ public class DspDataSourceManager
         pool.setPassword(config.getPassword());
         // 不预设连接：数据源不可达时不阻塞启动，失败在真正执行时暴露
         pool.setInitialSize(0);
-        pool.setMinIdle(0);
+        pool.setMinIdle(POOL_MIN_IDLE);
         pool.setMaxActive(POOL_MAX_ACTIVE);
         pool.setMaxWait(POOL_MAX_WAIT_MILLIS);
-        // 未设置校验语句，关闭借出/空闲校验以兼容非 MySQL 驱动
-        pool.setTestWhileIdle(false);
-        pool.setTestOnBorrow(false);
+        // 任意 driver 无法预置校验语句，改用 JDBC4 Connection.isValid 探活
+        pool.setValidConnectionChecker(new DspJdbc4ValidConnectionChecker());
+        pool.setExceptionSorter(new DspExceptionSorter());
+        pool.setValidationQueryTimeout(VALIDATION_QUERY_TIMEOUT_SECONDS);
+        pool.setTestOnBorrow(true);
+        pool.setTestWhileIdle(true);
         pool.setTestOnReturn(false);
+        pool.setKeepAlive(true);
+        pool.setKeepAliveBetweenTimeMillis(KEEP_ALIVE_BETWEEN_MILLIS);
+        pool.setTimeBetweenEvictionRunsMillis(EVICTION_RUN_INTERVAL_MILLIS);
+        pool.setMinEvictableIdleTimeMillis(MIN_EVICTABLE_IDLE_MILLIS);
         pool.setPoolPreparedStatements(false);
-        pool.setFailFast(true);
-        pool.setBreakAfterAcquireFailure(true);
+        // 沿用 Druid 默认：建连失败不退出创建线程，数据库恢复后连接池可自愈
+        pool.setFailFast(false);
+        pool.setBreakAfterAcquireFailure(false);
         return pool;
     }
 
