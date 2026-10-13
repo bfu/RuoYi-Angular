@@ -31,6 +31,9 @@ public class DspScript extends BaseEntity
     /** 脚本描述 */
     private String description;
 
+    /** 关联数据源ID(0=默认主库) */
+    private Long dataSourceId;
+
     /** 草稿 XML 内容 */
     private String content;
 
@@ -87,6 +90,16 @@ public class DspScript extends BaseEntity
         this.description = description;
     }
 
+    public Long getDataSourceId()
+    {
+        return dataSourceId;
+    }
+
+    public void setDataSourceId(Long dataSourceId)
+    {
+        this.dataSourceId = dataSourceId;
+    }
+
     public String getContent()
     {
         return content;
@@ -125,6 +138,7 @@ public class DspScript extends BaseEntity
             .append("slug", getSlug())
             .append("name", getName())
             .append("description", getDescription())
+            .append("dataSourceId", getDataSourceId())
             .append("currentVersion", getCurrentVersion())
             .append("status", getStatus())
             .append("createBy", getCreateBy())

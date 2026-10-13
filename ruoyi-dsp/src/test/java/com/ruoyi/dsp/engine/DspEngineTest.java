@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.sql.Connection;
 import java.sql.Statement;
@@ -21,17 +23,26 @@ import org.mybatis.spring.transaction.SpringManagedTransactionFactory;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import com.ruoyi.common.exception.ServiceException;
+import com.ruoyi.dsp.domain.DspDataSource;
+import com.ruoyi.dsp.mapper.DspDataSourceMapper;
 
 /**
  * {@link DspEngine} 单元测试（H2 内存库）
  * <p>
  * 覆盖：单条语句片段的动态注册/卸载、语句 id 取脚本 slug、语句分发执行、
- * 事务回滚预览、重复发布不产生重复键异常。
+ * 事务回滚预览、重复发布不产生重复键异常，以及按数据源隔离注册与执行。
+ * 默认数据源（{@code 0}）复用主库会话，其余按记录构建独立连接池与会话。
  *
  * @author ruoyi
  */
 class DspEngineTest
 {
+    /** 默认数据源ID（主库） */
+    private static final Long DEFAULT_DS = 0L;
+
+    /** 运行时数据源ID */
+    private static final Long RUNTIME_DS = 9L;
+
     /** 运行时 namespace：脚本 ID */
     private static final String NAMESPACE = "12";
 
@@ -46,8 +57,9 @@ class DspEngineTest
     @BeforeEach
     void setUp() throws Exception
     {
+        String jdbcUrl = "jdbc:h2:mem:dsp_" + System.nanoTime() + ";DB_CLOSE_DELAY=-1";
         JdbcDataSource dataSource = new JdbcDataSource();
-        dataSource.setURL("jdbc:h2:mem:dsp_" + System.nanoTime() + ";DB_CLOSE_DELAY=-1");
+        dataSource.setURL(jdbcUrl);
         dataSource.setUser("sa");
         dataSource.setPassword("");
         try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement())
@@ -60,16 +72,28 @@ class DspEngineTest
         Configuration configuration = new Configuration(environment);
         SqlSessionFactory sqlSessionFactory = new SqlSessionFactoryBuilder().build(configuration);
         PlatformTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
-        this.engine = new DspEngine(sqlSessionFactory, transactionManager);
+        // 运行时数据源按记录构建连接池，指向同一个 H2 内存库以验证隔离执行
+        DspDataSource runtime = new DspDataSource();
+        runtime.setDataSourceId(RUNTIME_DS);
+        runtime.setName("runtime");
+        runtime.setDriverClassName("org.h2.Driver");
+        runtime.setUrl(jdbcUrl);
+        runtime.setUsername("sa");
+        runtime.setPassword("");
+        runtime.setStatus("0");
+        DspDataSourceMapper mapper = mock(DspDataSourceMapper.class);
+        when(mapper.selectDspDataSourceById(RUNTIME_DS)).thenReturn(runtime);
+        DspDataSourceManager dataSourceManager = new DspDataSourceManager(sqlSessionFactory, transactionManager, mapper);
+        this.engine = new DspEngine(dataSourceManager);
     }
 
     @Test
     void selectReturnsRowsByStatementId()
     {
-        engine.register(NAMESPACE, SLUG, XML);
-        assertTrue(engine.hasNamespace(NAMESPACE));
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
+        assertTrue(engine.hasNamespace(DEFAULT_DS, NAMESPACE));
 
-        DspExecutionResult result = engine.execute(NAMESPACE, SLUG, null, false);
+        DspExecutionResult result = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, null, false);
         assertEquals("SELECT", result.getSqlCommandType());
         assertNotNull(result.getRows());
         assertEquals(1, result.getRows().size());
@@ -80,73 +104,76 @@ class DspEngineTest
     @Test
     void fullStatementIdIsNamespaceDotSlug()
     {
-        engine.register(NAMESPACE, SLUG, XML);
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
         // 完整语句 id = 脚本ID.slug
-        DspExecutionResult result = engine.execute(NAMESPACE, NAMESPACE + "." + SLUG, null, false);
+        DspExecutionResult result = engine.execute(DEFAULT_DS, NAMESPACE, NAMESPACE + "." + SLUG, null, false);
         assertEquals(1, result.getRows().size());
     }
 
     @Test
     void rollbackPreviewDoesNotPersist()
     {
-        engine.register(NAMESPACE, SLUG, "<insert>insert into demo_user(id, name) values(#{id}, #{name})</insert>");
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG,
+                "<insert>insert into demo_user(id, name) values(#{id}, #{name})</insert>");
         Map<String, Object> params = new HashMap<>();
         params.put("id", 99L);
         params.put("name", "bob");
 
-        DspExecutionResult inserted = engine.execute(NAMESPACE, SLUG, params, true);
+        DspExecutionResult inserted = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, params, true);
         assertEquals("INSERT", inserted.getSqlCommandType());
         assertEquals(1, inserted.getAffectedRows());
         assertTrue(inserted.isRollback());
 
         // 回滚预览不应落库，仍只有初始的 1 条
-        engine.register(NAMESPACE, SLUG, XML);
-        DspExecutionResult after = engine.execute(NAMESPACE, SLUG, null, false);
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
+        DspExecutionResult after = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, null, false);
         assertEquals(1, after.getRows().size());
     }
 
     @Test
     void commitExecutionPersists()
     {
-        engine.register(NAMESPACE, SLUG, "<insert>insert into demo_user(id, name) values(#{id}, #{name})</insert>");
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG,
+                "<insert>insert into demo_user(id, name) values(#{id}, #{name})</insert>");
         Map<String, Object> params = new HashMap<>();
         params.put("id", 2L);
         params.put("name", "carol");
 
-        DspExecutionResult inserted = engine.execute(NAMESPACE, SLUG, params, false);
+        DspExecutionResult inserted = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, params, false);
         assertEquals(1, inserted.getAffectedRows());
 
-        engine.register(NAMESPACE, SLUG, XML);
-        DspExecutionResult after = engine.execute(NAMESPACE, SLUG, null, false);
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
+        DspExecutionResult after = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, null, false);
         assertEquals(2, after.getRows().size());
     }
 
     @Test
     void reRegisterReplacesStatementsWithoutDuplicateKeyError()
     {
-        engine.register(NAMESPACE, SLUG, XML);
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
         // 重复发布同一 namespace 不应抛出 StrictMap 重复键异常
-        engine.register(NAMESPACE, SLUG, XML);
-        assertTrue(engine.hasNamespace(NAMESPACE));
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
+        assertTrue(engine.hasNamespace(DEFAULT_DS, NAMESPACE));
 
-        DspExecutionResult result = engine.execute(NAMESPACE, SLUG, null, false);
+        DspExecutionResult result = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, null, false);
         assertEquals(1, result.getRows().size());
     }
 
     @Test
     void unregisterRemovesStatements()
     {
-        engine.register(NAMESPACE, SLUG, XML);
-        engine.unregister(NAMESPACE);
-        assertFalse(engine.hasNamespace(NAMESPACE));
-        assertThrows(ServiceException.class, () -> engine.execute(NAMESPACE, SLUG, null, false));
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
+        assertEquals(1, engine.loadedNamespaceCount());
+        engine.unregister(DEFAULT_DS, NAMESPACE);
+        assertFalse(engine.hasNamespace(DEFAULT_DS, NAMESPACE));
+        assertThrows(ServiceException.class, () -> engine.execute(DEFAULT_DS, NAMESPACE, SLUG, null, false));
     }
 
     @Test
     void unknownStatementThrows()
     {
-        engine.register(NAMESPACE, SLUG, XML);
-        assertThrows(ServiceException.class, () -> engine.execute(NAMESPACE, "missing", null, false));
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
+        assertThrows(ServiceException.class, () -> engine.execute(DEFAULT_DS, NAMESPACE, "missing", null, false));
     }
 
     @Test
@@ -154,8 +181,8 @@ class DspEngineTest
     {
         // 仅有历史 mapper 包装、无语句时，注册应快速失败而不是静默加载 0 条语句
         assertThrows(ServiceException.class,
-                () -> engine.register(NAMESPACE, SLUG, "<mapper namespace=\"legacy\"></mapper>"));
-        assertFalse(engine.hasNamespace(NAMESPACE));
+                () -> engine.register(DEFAULT_DS, NAMESPACE, SLUG, "<mapper namespace=\"legacy\"></mapper>"));
+        assertFalse(engine.hasNamespace(DEFAULT_DS, NAMESPACE));
     }
 
     @Test
@@ -165,21 +192,44 @@ class DspEngineTest
                 + "\"http://mybatis.org/dtd/mybatis-3-mapper.dtd\">"
                 + "<mapper namespace=\"legacy_slug\"><select resultType=\"map\">"
                 + "select id, name from demo_user order by id</select></mapper>";
-        engine.register(NAMESPACE, SLUG, legacy);
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, legacy);
 
-        DspExecutionResult result = engine.execute(NAMESPACE, SLUG, null, false);
+        DspExecutionResult result = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, null, false);
         assertEquals(1, result.getRows().size());
     }
 
     @Test
     void scalarParameterIsUnwrapped()
     {
-        engine.register(NAMESPACE, SLUG,
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG,
                 "<select parameterType=\"long\" resultType=\"map\">select id, name from demo_user where id = #{id}</select>");
         Map<String, Object> params = new HashMap<>();
         params.put("id", 1L);
         // 声明 parameterType="long" 时，引擎应将单元素 Map 解包为标量
-        DspExecutionResult result = engine.execute(NAMESPACE, SLUG, params, false);
+        DspExecutionResult result = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, params, false);
         assertEquals(1, result.getRows().size());
+    }
+
+    @Test
+    void runtimeDataSourceIsIsolatedFromDefault()
+    {
+        // 同一个 slug 分别注册到默认库与运行时数据源，互不影响
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
+        engine.register(RUNTIME_DS, NAMESPACE, SLUG, XML);
+        assertEquals(2, engine.loadedNamespaceCount());
+
+        DspExecutionResult runtimeResult = engine.execute(RUNTIME_DS, NAMESPACE, SLUG, null, false);
+        assertEquals(1, runtimeResult.getRows().size());
+
+        engine.unregisterAll(DEFAULT_DS);
+        assertFalse(engine.hasNamespace(DEFAULT_DS, NAMESPACE));
+        assertTrue(engine.hasNamespace(RUNTIME_DS, NAMESPACE));
+    }
+
+    @Test
+    void unavailableDataSourceThrows()
+    {
+        // 未登记的数据源在注册阶段即报错，避免语句落到错误的库
+        assertThrows(ServiceException.class, () -> engine.register(404L, NAMESPACE, SLUG, XML));
     }
 }

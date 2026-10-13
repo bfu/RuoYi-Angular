@@ -31,9 +31,24 @@ public interface DspScriptMapper
     Long selectScriptIdBySlug(String slug);
 
     /**
+     * 根据 slug 查询执行路由（脚本ID + 数据源ID + 状态，不含 XML 内容）
+     */
+    DspScript selectScriptRouteBySlug(String slug);
+
+    /**
      * 查询全部已发布脚本（含 XML 内容），供启动/刷新时热加载
      */
     List<DspScript> selectPublishedScriptList();
+
+    /**
+     * 查询指定数据源下已发布脚本（含 XML 内容），供数据源变更后重载
+     */
+    List<DspScript> selectPublishedScriptListByDataSourceId(Long dataSourceId);
+
+    /**
+     * 统计绑定到指定数据源的脚本数量（用于删除保护）
+     */
+    int countScriptByDataSourceId(Long dataSourceId);
 
     /**
      * 新增脚本

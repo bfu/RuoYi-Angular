@@ -88,4 +88,9 @@ public interface IDspScriptService
      * 重新加载全部已发布脚本到引擎
      */
     void reloadAll();
+
+    /**
+     * 重新加载指定数据源下已发布脚本到引擎（数据源变更后调用）
+     */
+    void reloadByDataSource(Long dataSourceId);
 }
