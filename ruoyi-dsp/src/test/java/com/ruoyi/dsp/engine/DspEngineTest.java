@@ -31,8 +31,8 @@ import com.ruoyi.common.exception.ServiceException;
  */
 class DspEngineTest
 {
-    /** 运行时 namespace：脚本 ID */
-    private static final String NAMESPACE = "12";
+    /** 运行时 namespace：脚本 slug */
+    private static final String NAMESPACE = "demo_user";
 
     /** 脚本内容仅需语句片段，XML 声明/DOCTYPE/mapper 包装由平台生成 */
     private static final String XML = "<select id=\"selectAll\" resultType=\"map\">select id, name from demo_user order by id</select>"

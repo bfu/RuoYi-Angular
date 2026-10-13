@@ -58,7 +58,7 @@ public class DspEngine
     /**
      * 注册（或覆盖）指定 namespace 的脚本语句
      *
-     * @param namespace  命名空间（即脚本 ID，由 {@link DspValidator#namespaceOf(Long)} 生成）
+     * @param namespace  命名空间（即脚本 slug，完整语句 id 为 namespace.语句名）
      * @param content    语句片段（XML 声明、DOCTYPE 与 mapper 包装由平台统一生成）
      */
     public synchronized void register(String namespace, String content)
@@ -169,7 +169,7 @@ public class DspEngine
     /**
      * 执行脚本语句
      *
-     * @param namespace   命名空间（脚本 ID）
+     * @param namespace   命名空间（脚本 slug）
      * @param statementId 语句 id
      * @param params      参数
      * @param rollback    是否事务回滚预览

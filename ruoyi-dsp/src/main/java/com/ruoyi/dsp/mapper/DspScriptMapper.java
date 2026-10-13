@@ -26,11 +26,6 @@ public interface DspScriptMapper
     DspScript selectDspScriptBySlug(String slug);
 
     /**
-     * 根据 slug 查询脚本ID（执行入口用于定位运行时 namespace）
-     */
-    Long selectScriptIdBySlug(String slug);
-
-    /**
      * 查询全部已发布脚本（含 XML 内容），供启动/刷新时热加载
      */
     List<DspScript> selectPublishedScriptList();

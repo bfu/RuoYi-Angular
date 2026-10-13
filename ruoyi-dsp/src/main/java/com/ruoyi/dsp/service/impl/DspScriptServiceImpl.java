@@ -118,7 +118,7 @@ public class DspScriptServiceImpl implements IDspScriptService
             DspScript exist = dspScriptMapper.selectDspScriptById(scriptId);
             if (exist != null)
             {
-                dspEngine.unregister(namespaceOf(exist));
+                dspEngine.unregister(exist.getSlug());
             }
         }
         dspScriptVersionMapper.deleteVersionByScriptIds(scriptIds);
@@ -134,7 +134,7 @@ public class DspScriptServiceImpl implements IDspScriptService
             throw new ServiceException("脚本不存在");
         }
         String scriptContent = StringUtils.isBlank(content) ? exist.getContent() : content;
-        return dspValidator.validate(scriptId, scriptContent);
+        return dspValidator.validate(exist.getSlug(), scriptContent);
     }
 
     @Override
@@ -145,7 +145,7 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             throw new ServiceException("脚本不存在");
         }
-        DspValidationResult validation = dspValidator.validate(scriptId, exist.getContent());
+        DspValidationResult validation = dspValidator.validate(exist.getSlug(), exist.getContent());
         if (!validation.isValid())
         {
             throw new ServiceException("脚本校验未通过：" + String.join("；", validation.getErrors()));
@@ -172,18 +172,12 @@ public class DspScriptServiceImpl implements IDspScriptService
     @Override
     public DspExecutionResult execute(String slug, String statementId, Map<String, Object> params)
     {
-        // 对外仍以 slug 定位脚本，运行时 namespace 使用脚本 ID
-        Long scriptId = dspScriptMapper.selectScriptIdBySlug(slug);
-        if (scriptId == null)
-        {
-            throw new ServiceException("脚本不存在：" + slug);
-        }
-        String namespace = DspValidator.namespaceOf(scriptId);
-        if (!dspEngine.hasNamespace(namespace))
+        // slug 即运行时 namespace，完整语句 id 为 slug.语句名（由引擎拼接）
+        if (StringUtils.isBlank(slug) || !dspEngine.hasNamespace(slug))
         {
             throw new ServiceException("脚本未发布或不可用：" + slug);
         }
-        return dspEngine.execute(namespace, statementId, params, false);
+        return dspEngine.execute(slug, statementId, params, false);
     }
 
     @Override
@@ -199,7 +193,7 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             throw new ServiceException("脚本内容为空，无法发布");
         }
-        DspValidationResult validation = dspValidator.validate(scriptId, script.getContent());
+        DspValidationResult validation = dspValidator.validate(script.getSlug(), script.getContent());
         if (!validation.isValid())
         {
             throw new ServiceException("脚本校验未通过：" + String.join("；", validation.getErrors()));
@@ -225,7 +219,7 @@ public class DspScriptServiceImpl implements IDspScriptService
         update.setUpdateBy(operator);
         dspScriptMapper.updateDspScript(update);
 
-        dspEngine.register(namespaceOf(script), script.getContent());
+        dspEngine.register(script.getSlug(), script.getContent());
         return newVersion;
     }
 
@@ -243,7 +237,7 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             throw new ServiceException("目标版本不存在或不属于该脚本");
         }
-        DspValidationResult validation = dspValidator.validate(scriptId, version.getContent());
+        DspValidationResult validation = dspValidator.validate(script.getSlug(), version.getContent());
         if (!validation.isValid())
         {
             throw new ServiceException("目标版本内容校验未通过：" + String.join("；", validation.getErrors()));
@@ -259,7 +253,7 @@ public class DspScriptServiceImpl implements IDspScriptService
         update.setUpdateBy(operator);
         dspScriptMapper.updateDspScript(update);
 
-        dspEngine.register(namespaceOf(script), version.getContent());
+        dspEngine.register(script.getSlug(), version.getContent());
         return version.getVersion();
     }
 
@@ -271,7 +265,7 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             throw new ServiceException("脚本不存在");
         }
-        dspEngine.unregister(namespaceOf(script));
+        dspEngine.unregister(script.getSlug());
 
         DspScript update = new DspScript();
         update.setScriptId(scriptId);
@@ -301,7 +295,7 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             try
             {
-                dspEngine.register(namespaceOf(script), script.getContent());
+                dspEngine.register(script.getSlug(), script.getContent());
                 success++;
             }
             catch (Exception e)
@@ -310,13 +304,5 @@ public class DspScriptServiceImpl implements IDspScriptService
             }
         }
         log.info("动态脚本平台初始化完成，已加载 {}/{} 个已发布脚本", success, published.size());
-    }
-
-    /**
-     * 运行时 namespace：以脚本 ID 生成，避免依赖可变的业务标识
-     */
-    private String namespaceOf(DspScript script)
-    {
-        return DspValidator.namespaceOf(script == null ? null : script.getScriptId());
     }
 }

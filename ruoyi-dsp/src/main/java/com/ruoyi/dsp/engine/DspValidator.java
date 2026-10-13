@@ -23,8 +23,9 @@ import com.ruoyi.common.utils.StringUtils;
 /**
  * 动态脚本校验器
  * <p>
- * 脚本内容仅需编写语句片段（{@code <select>/<insert>/<update>/<delete>} 等），
- * XML 声明、DOCTYPE 与 {@code <mapper>} 包装由平台统一生成，并以脚本 ID 作为 namespace。
+ * 脚本内容仅需编写语句片段（{@code <select>/<insert>/<update>/<delete>} 等，语句 id 只写语句名），
+ * XML 声明、DOCTYPE 与 {@code <mapper>} 包装由平台统一生成，并以脚本 slug 作为 namespace，
+ * 即运行时完整语句 id 为 {@code slug.语句名}（由平台拼接）。
  * 本类负责：XML 合法性、语句声明完整性，以及基于临时 {@link Configuration} 的
  * MyBatis 语义校验；校验过程不污染运行中的主配置。
  *
@@ -61,14 +62,6 @@ public class DspValidator
     }
 
     /**
-     * 由脚本 ID 生成运行时 namespace
-     */
-    public static String namespaceOf(Long scriptId)
-    {
-        return scriptId == null ? "" : String.valueOf(scriptId);
-    }
-
-    /**
      * 剥离 XML 声明、DOCTYPE 与 {@code <mapper>} 包装，仅保留语句片段
      */
     public static String unwrap(String content)
@@ -101,7 +94,7 @@ public class DspValidator
     /**
      * 将语句片段包装为合法的 Mapper XML
      *
-     * @param namespace 运行时 namespace（脚本 ID）
+     * @param namespace 运行时 namespace（脚本 slug）
      * @param content   语句片段（可含历史包装，自动剥离）
      */
     public static String wrap(String namespace, String content)
@@ -112,16 +105,16 @@ public class DspValidator
     /**
      * 校验脚本内容
      *
-     * @param scriptId 脚本 ID（作为运行时 namespace）
-     * @param content  语句片段
+     * @param slug    脚本标识（作为运行时 namespace，与语句名拼接为完整语句 id）
+     * @param content 语句片段
      * @return 校验结果
      */
-    public DspValidationResult validate(Long scriptId, String content)
+    public DspValidationResult validate(String slug, String content)
     {
         DspValidationResult result = new DspValidationResult();
-        if (scriptId == null)
+        if (StringUtils.isBlank(slug))
         {
-            result.addError("脚本 ID 不能为空");
+            result.addError("脚本标识(slug)不能为空");
             return result;
         }
         if (StringUtils.isBlank(content))
@@ -130,7 +123,7 @@ public class DspValidator
             return result;
         }
 
-        String namespace = namespaceOf(scriptId);
+        String namespace = slug;
         result.setNamespace(namespace);
         if (hasWrapper(content))
         {
@@ -206,6 +199,12 @@ public class DspValidator
             if (StringUtils.isBlank(id))
             {
                 result.addError("<" + nodeName + "> 缺少 id 属性");
+                continue;
+            }
+            if (id.indexOf('.') >= 0)
+            {
+                // 完整语句 id 为 slug.语句名，由平台拼接，内容中只需写语句名
+                result.addError("<" + nodeName + "> 的 id 不能包含 '.'：请只写语句名（slug 前缀由平台拼接）");
                 continue;
             }
             result.getStatements().add(id);
