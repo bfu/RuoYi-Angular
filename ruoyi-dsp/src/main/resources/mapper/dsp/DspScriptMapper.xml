@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.dsp.mapper.DspScriptMapper">
+
+    <resultMap type="DspScript" id="DspScriptResult">
+        <id     property="scriptId"       column="script_id"       />
+        <result property="slug"           column="slug"            />
+        <result property="name"           column="name"            />
+        <result property="description"    column="description"     />
+        <result property="content"        column="content"         />
+        <result property="currentVersion" column="current_version" />
+        <result property="status"         column="status"          />
+        <result property="createBy"       column="create_by"       />
+        <result property="createTime"     column="create_time"     />
+        <result property="updateBy"       column="update_by"       />
+        <result property="updateTime"     column="update_time"     />
+        <result property="remark"         column="remark"          />
+    </resultMap>
+
+    <sql id="selectDspScriptVo">
+        select script_id, slug, name, description, current_version, status, create_by, create_time, update_by, update_time, remark
+        from dsp_script
+    </sql>
+
+    <select id="selectDspScriptList" parameterType="DspScript" resultMap="DspScriptResult">
+        <include refid="selectDspScriptVo"/>
+        <where>
+            <if test="name != null and name != ''"> and name like concat('%', #{name}, '%')</if>
+            <if test="slug != null and slug != ''"> and slug like concat('%', #{slug}, '%')</if>
+            <if test="status != null and status != ''"> and status = #{status}</if>
+        </where>
+        order by update_time desc, script_id desc
+    </select>
+
+    <select id="selectDspScriptById" parameterType="Long" resultMap="DspScriptResult">
+        select script_id, slug, name, description, content, current_version, status, create_by, create_time, update_by, update_time, remark
+        from dsp_script
+        where script_id = #{scriptId}
+    </select>
+
+    <select id="selectDspScriptBySlug" parameterType="String" resultMap="DspScriptResult">
+        select script_id, slug, name, description, content, current_version, status, create_by, create_time, update_by, update_time, remark
+        from dsp_script
+        where slug = #{slug} limit 1
+    </select>
+
+    <select id="selectPublishedScriptList" resultMap="DspScriptResult">
+        select script_id, slug, name, description, content, current_version, status, create_by, create_time, update_by, update_time, remark
+        from dsp_script
+        where status = '1' and content is not null and current_version &gt; 0
+    </select>
+
+    <insert id="insertDspScript" parameterType="DspScript" useGeneratedKeys="true" keyProperty="scriptId">
+        insert into dsp_script(
+            <if test="slug != null and slug != ''">slug,</if>
+            <if test="name != null and name != ''">name,</if>
+            <if test="description != null">description,</if>
+            <if test="content != null">content,</if>
+            <if test="currentVersion != null">current_version,</if>
+            <if test="status != null and status != ''">status,</if>
+            <if test="createBy != null and createBy != ''">create_by,</if>
+            <if test="remark != null">remark,</if>
+            create_time
+        )values(
+            <if test="slug != null and slug != ''">#{slug},</if>
+            <if test="name != null and name != ''">#{name},</if>
+            <if test="description != null">#{description},</if>
+            <if test="content != null">#{content},</if>
+            <if test="currentVersion != null">#{currentVersion},</if>
+            <if test="status != null and status != ''">#{status},</if>
+            <if test="createBy != null and createBy != ''">#{createBy},</if>
+            <if test="remark != null">#{remark},</if>
+            sysdate()
+        )
+    </insert>
+
+    <update id="updateDspScript" parameterType="DspScript">
+        update dsp_script
+        <set>
+            <if test="slug != null and slug != ''">slug = #{slug},</if>
+            <if test="name != null and name != ''">name = #{name},</if>
+            <if test="description != null">description = #{description},</if>
+            <if test="content != null">content = #{content},</if>
+            <if test="currentVersion != null">current_version = #{currentVersion},</if>
+            <if test="status != null and status != ''">status = #{status},</if>
+            <if test="updateBy != null and updateBy != ''">update_by = #{updateBy},</if>
+            <if test="remark != null">remark = #{remark},</if>
+            update_time = sysdate()
+        </set>
+        where script_id = #{scriptId}
+    </update>
+
+    <delete id="deleteDspScriptById" parameterType="Long">
+        delete from dsp_script where script_id = #{scriptId}
+    </delete>
+
+    <delete id="deleteDspScriptByIds" parameterType="Long">
+        delete from dsp_script where script_id in
+        <foreach collection="array" item="scriptId" open="(" separator="," close=")">
+            #{scriptId}
+        </foreach>
+    </delete>
+
+</mapper>

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.dsp.mapper.DspScriptVersionMapper">
+
+    <resultMap type="DspScriptVersion" id="DspScriptVersionResult">
+        <id     property="versionId"   column="version_id"   />
+        <result property="scriptId"    column="script_id"    />
+        <result property="slug"        column="slug"         />
+        <result property="version"     column="version"      />
+        <result property="content"     column="content"      />
+        <result property="status"      column="status"       />
+        <result property="publishBy"   column="publish_by"   />
+        <result property="publishTime" column="publish_time" />
+        <result property="remark"      column="remark"       />
+    </resultMap>
+
+    <select id="selectVersionListByScriptId" parameterType="Long" resultMap="DspScriptVersionResult">
+        select version_id, script_id, slug, version, status, publish_by, publish_time, remark
+        from dsp_script_version
+        where script_id = #{scriptId}
+        order by version desc
+    </select>
+
+    <select id="selectVersionById" parameterType="Long" resultMap="DspScriptVersionResult">
+        select version_id, script_id, slug, version, content, status, publish_by, publish_time, remark
+        from dsp_script_version
+        where version_id = #{versionId}
+    </select>
+
+    <select id="selectCurrentVersionByScriptId" parameterType="Long" resultMap="DspScriptVersionResult">
+        select version_id, script_id, slug, version, content, status, publish_by, publish_time, remark
+        from dsp_script_version
+        where script_id = #{scriptId} and status = '1'
+        order by version desc limit 1
+    </select>
+
+    <insert id="insertVersion" parameterType="DspScriptVersion" useGeneratedKeys="true" keyProperty="versionId">
+        insert into dsp_script_version(
+            script_id,
+            slug,
+            version,
+            <if test="content != null">content,</if>
+            <if test="status != null and status != ''">status,</if>
+            <if test="publishBy != null and publishBy != ''">publish_by,</if>
+            <if test="publishTime != null">publish_time,</if>
+            <if test="remark != null">remark,</if>
+            create_time
+        )values(
+            #{scriptId},
+            #{slug},
+            #{version},
+            <if test="content != null">#{content},</if>
+            <if test="status != null and status != ''">#{status},</if>
+            <if test="publishBy != null and publishBy != ''">#{publishBy},</if>
+            <if test="publishTime != null">#{publishTime},</if>
+            <if test="remark != null">#{remark},</if>
+            sysdate()
+        )
+    </insert>
+
+    <update id="updateVersionStatusByScriptId">
+        update dsp_script_version set status = #{status} where script_id = #{scriptId}
+    </update>
+
+    <update id="markVersionCurrent" parameterType="Long">
+        update dsp_script_version set status = '1' where version_id = #{versionId}
+    </update>
+
+    <delete id="deleteVersionByScriptId" parameterType="Long">
+        delete from dsp_script_version where script_id = #{scriptId}
+    </delete>
+
+    <delete id="deleteVersionByScriptIds" parameterType="Long">
+        delete from dsp_script_version where script_id in
+        <foreach collection="array" item="scriptId" open="(" separator="," close=")">
+            #{scriptId}
+        </foreach>
+    </delete>
+
+</mapper>
