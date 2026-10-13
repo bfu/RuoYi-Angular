@@ -12,16 +12,22 @@ import org.junit.jupiter.api.Test;
 /**
  * {@link DspValidator} 单元测试（纯解析，无数据库依赖）
  * <p>
- * 覆盖：语句片段自动包装、以 slug 作为 namespace（完整语句 id 为 slug.语句名）、
- * 遗留 mapper 包装自动剥离、语句完整性与注入告警。
+ * 覆盖：单条语句片段自动包装、namespace 取脚本 ID、语句 id 由平台填为 slug、
+ * 内容中的 id 被忽略、多语句拒绝、遗留 mapper 包装剥离与注入告警。
  *
  * @author ruoyi
  */
 class DspValidatorTest
 {
+    /** 脚本 ID：运行时 namespace */
+    private static final Long SCRIPT_ID = 12L;
+
+    /** 脚本标识：语句 id */
     private static final String SLUG = "order_query";
 
-    private static final String DOCTYPE = "<!DOCTYPE mapper PUBLIC \"-//mybatis.org//DTD Mapper 3.0//EN\" "
+    private static final String FRAGMENT = "<select resultType=\"map\">select 1 as id</select>";
+
+    private static final String LEGACY_DOCTYPE = "<!DOCTYPE mapper PUBLIC \"-//mybatis.org//DTD Mapper 3.0//EN\" "
             + "\"http://mybatis.org/dtd/mybatis-3-mapper.dtd\">";
 
     private DspValidator validator()
@@ -31,34 +37,66 @@ class DspValidatorTest
     }
 
     @Test
-    void statementFragmentPasses()
+    void singleStatementFragmentPasses()
     {
-        DspValidationResult result = validator().validate(SLUG,
-                "<select id=\"selectAll\" resultType=\"map\">select 1 as id</select>");
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG, FRAGMENT);
         assertTrue(result.isValid(), () -> String.join(",", result.getErrors()));
-        // namespace 取脚本 slug，完整语句 id 为 slug.语句名
-        assertEquals(SLUG, result.getNamespace());
-        assertTrue(result.getStatements().contains("selectAll"));
+        // namespace 取脚本 ID，语句 id 取脚本 slug
+        assertEquals("12", result.getNamespace());
+        assertEquals(1, result.getStatements().size());
+        assertEquals(SLUG, result.getStatements().get(0));
+        assertTrue(result.getWarnings().isEmpty());
+    }
+
+    @Test
+    void mapperXmlInjectsNamespaceAndStatementId()
+    {
+        String xml = DspValidator.mapperXml("12", SLUG, FRAGMENT);
+        assertTrue(xml.contains("<!DOCTYPE mapper"));
+        assertTrue(xml.contains("namespace=\"12\""));
+        assertTrue(xml.contains("id=\"order_query\""));
+    }
+
+    @Test
+    void statementIdInContentIsIgnored()
+    {
+        String content = "<select id=\"mine\" resultType=\"map\">select 1</select>";
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG, content);
+        assertTrue(result.isValid(), () -> String.join(",", result.getErrors()));
+        assertTrue(result.getWarnings().stream().anyMatch(warning -> warning.contains("id")));
+
+        String xml = DspValidator.mapperXml("12", SLUG, content);
+        assertTrue(xml.contains("id=\"order_query\""));
+        assertFalse(xml.contains("id=\"mine\""));
+    }
+
+    @Test
+    void multipleStatementsFails()
+    {
+        String content = FRAGMENT + "<insert>insert into demo values(1)</insert>";
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG, content);
+        assertFalse(result.isValid());
+        assertTrue(result.getErrors().stream().anyMatch(error -> error.contains("只能包含一条")));
     }
 
     @Test
     void legacyMapperWrapperIsStripped()
     {
-        String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + DOCTYPE
-                + "<mapper namespace=\"legacy_slug\"><select id=\"a\" resultType=\"map\">select 1</select></mapper>";
+        String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + LEGACY_DOCTYPE
+                + "<mapper namespace=\"legacy_slug\"><select id=\"legacy\" resultType=\"map\">select 1</select></mapper>";
         assertTrue(DspValidator.hasWrapper(xml));
 
-        DspValidationResult result = validator().validate(SLUG, xml);
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG, xml);
         assertTrue(result.isValid(), () -> String.join(",", result.getErrors()));
-        assertEquals(SLUG, result.getNamespace());
+        assertEquals("12", result.getNamespace());
         assertTrue(result.getWarnings().stream().anyMatch(warning -> warning.contains("已自动忽略")));
     }
 
     @Test
     void malformedXmlFails()
     {
-        DspValidationResult result = validator().validate(SLUG,
-                "<select id=\"a\" resultType=\"map\">select 1");
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG,
+                "<select resultType=\"map\">select 1");
         assertFalse(result.isValid());
         assertFalse(result.getErrors().isEmpty());
     }
@@ -66,7 +104,7 @@ class DspValidatorTest
     @Test
     void emptyContentFails()
     {
-        DspValidationResult result = validator().validate(SLUG, "   ");
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG, "   ");
         assertFalse(result.isValid());
         assertTrue(result.getErrors().stream().anyMatch(error -> error.contains("内容为空")));
     }
@@ -74,24 +112,15 @@ class DspValidatorTest
     @Test
     void fragmentWithoutStatementFails()
     {
-        DspValidationResult result = validator().validate(SLUG, "<!-- 只有注释 -->");
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG, "<!-- 只有注释 -->");
         assertFalse(result.isValid());
-        assertTrue(result.getErrors().stream().anyMatch(error -> error.contains("未找到任何")));
-    }
-
-    @Test
-    void statementIdWithDotFails()
-    {
-        DspValidationResult result = validator().validate(SLUG,
-                "<select id=\"order_query.selectAll\" resultType=\"map\">select 1</select>");
-        assertFalse(result.isValid());
-        assertTrue(result.getErrors().stream().anyMatch(error -> error.contains("不能包含 '.'")));
+        assertTrue(result.getErrors().stream().anyMatch(error -> error.contains("未找到")));
     }
 
     @Test
     void selectWithoutResultTypeFails()
     {
-        DspValidationResult result = validator().validate(SLUG, "<select id=\"a\">select 1</select>");
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG, "<select>select 1</select>");
         assertFalse(result.isValid());
         assertTrue(result.getErrors().stream().anyMatch(error -> error.contains("resultType")));
     }
@@ -99,19 +128,16 @@ class DspValidatorTest
     @Test
     void dollarPlaceholderProducesWarning()
     {
-        DspValidationResult result = validator().validate(SLUG,
-                "<select id=\"a\" resultType=\"map\">select * from ${table}</select>");
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG,
+                "<select resultType=\"map\">select * from ${table}</select>");
         assertTrue(result.isValid(), () -> String.join(",", result.getErrors()));
         assertFalse(result.getWarnings().isEmpty());
     }
 
     @Test
-    void wrapBuildsMapperXmlWithSlugNamespace()
+    void missingScriptIdOrSlugFails()
     {
-        String xml = DspValidator.wrap(SLUG, "<select id=\"a\" resultType=\"map\">select 1</select>");
-        assertTrue(xml.contains("<!DOCTYPE mapper"));
-        assertTrue(xml.contains("namespace=\"order_query\""));
-        assertTrue(xml.contains("<select id=\"a\""));
-        assertFalse(DspValidator.hasWrapper(DspValidator.unwrap(xml)));
+        assertFalse(validator().validate(null, SLUG, FRAGMENT).isValid());
+        assertFalse(validator().validate(SCRIPT_ID, "  ", FRAGMENT).isValid());
     }
 }

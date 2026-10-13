@@ -5,12 +5,12 @@
 
 ## 特性
 
-- 脚本管理：唯一 `slug` 标识（同时作为 MyBatis namespace），语句片段在线编辑（Monaco 编辑器）。
+- 脚本管理：唯一 `slug` 标识（即语句 id），单条语句片段在线编辑（Monaco 编辑器）。
 - 校验：XML 合法性 + MyBatis 语义校验，返回可读错误与安全告警。
 - 测试：事务回滚预览——查询可看结果、DML 仅返回影响行数且不落库。
 - 发布/版本历史：每次发布留档到独立版本表，版本号递增，支持回滚到任意历史版本。
 - 动态热加载：启动加载全部已发布脚本，发布/回滚/下线增量更新内存注册表，无需重启。
-- 统一执行 API：`POST /dsp/exec/{slug}/{statementId}`。
+- 统一执行 API：`POST /dsp/exec/{slug}`。
 
 ## 目录
 
@@ -47,7 +47,7 @@ ruoyi-dsp/
 ## 统一执行 API
 
 ```
-POST /dsp/exec/{slug}/{statementId}
+POST /dsp/exec/{slug}
 Content-Type: application/json
 
 { "id": 1, "name": "foo" }
@@ -72,26 +72,27 @@ Content-Type: application/json
 
 约定：`select` 返回 `rows`（每行为 Map，键为数据库原始列名，因 `mapUnderscoreToCamelCase=false`）；
 `insert/update/delete` 返回 `affectedRows`。`#{}` 由 MyBatis 预编译，`${}` 存在注入风险（校验阶段告警）。
-`slug` 即运行时 namespace：平台以 `slug` 作为 namespace，与语句名拼成完整语句 id `slug.语句名`
-（例如脚本 `order_query` 的 `selectList` → `order_query.selectList`），调用方按 `slug` + 语句名调用即可。
+`slug` 即语句 id：平台以**脚本 ID** 作为 namespace、以 `slug` 作为语句 id，
+拼成完整语句 id `脚本ID.slug`（例如脚本 ID=12、slug=`order_query` → `12.order_query`），
+调用方只需按 `slug` 调用。
 
 ## 编写规范
 
-脚本内容**仅需编写语句片段**，xml 声明、DOCTYPE、`<mapper>` 标签与 namespace 均由平台补全：
+**一个脚本只写一条语句**，且**不写 id**；xml 声明、DOCTYPE、`<mapper>` 标签、namespace 与语句 id
+均由平台补全：
 
 ```xml
-<select id="selectList" resultType="map">
+<select resultType="map">
   select 1 as id
 </select>
 ```
 
-1. 语句 `id` **只写语句名**（如 `selectList`）：平台以脚本 `slug` 作为 namespace，自动拼成完整语句 id `slug.语句名`；
-   内容中无需、也不应书写 `namespace`，更不要写 `slug` 前缀。
-2. 语句 `id` 不能包含 `.`（`.` 用于分隔 namespace 与语句名）。
+1. 语句 id 由平台填充为脚本 `slug`，运行时 namespace 取脚本 ID：内容中不写 `id`、不写 `namespace`，
+   也不写 `slug` 前缀（内容里写了 `id` 会被忽略并给出提示）。
+2. 一个脚本只允许一条 `<select>/<insert>/<update>/<delete>` 语句，多条会被校验拒绝。
 3. 历史内容若仍带 `<?xml>`、DOCTYPE 或 `<mapper>` 包装，平台会自动剥离并在校验结果中给出提示。
 4. `<select>` 必须显式声明 `resultType` 或 `resultMap`（结果集默认使用 `map`）。
-5. 每个 `<select>/<insert>/<update>/<delete>` 需有唯一 `id`，执行时按 `statementId`（语句名）定位。
-6. `#{}` 为预编译占位（推荐）；`${}` 为原始拼接，存在注入风险，平台会在校验阶段告警。
+5. `#{}` 为预编译占位（推荐）；`${}` 为原始拼接，存在注入风险，平台会在校验阶段告警。
 
 ## 管理端接口
 
@@ -123,4 +124,4 @@ npm test
 ```
 
 > 动态加载与执行的核心逻辑由 `DspEngineTest`（H2 内存库，覆盖注册/执行/事务回滚/重复发布）与
-> `DspValidatorTest`（纯解析，覆盖片段包装/遗留包装剥离/namespace(slug)/resultType 与语句 id 校验）保障。
+> `DspValidatorTest`（纯解析，覆盖片段包装/遗留包装剥离/namespace=脚本ID/语句 id=slug/多语句拒绝）保障。

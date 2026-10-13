@@ -58,14 +58,19 @@ public class DspEngine
     /**
      * 注册（或覆盖）指定 namespace 的脚本语句
      *
-     * @param namespace  命名空间（即脚本 slug，完整语句 id 为 namespace.语句名）
-     * @param content    语句片段（XML 声明、DOCTYPE 与 mapper 包装由平台统一生成）
+     * @param namespace   命名空间（脚本 ID）
+     * @param statementId 语句 id（脚本 slug）
+     * @param content     语句片段（xml 声明、DOCTYPE、mapper 包装与 id 由平台统一生成）
      */
-    public synchronized void register(String namespace, String content)
+    public synchronized void register(String namespace, String statementId, String content)
     {
         if (StringUtils.isBlank(namespace))
         {
             throw new ServiceException("namespace 不能为空");
+        }
+        if (StringUtils.isBlank(statementId))
+        {
+            throw new ServiceException("语句 id 不能为空");
         }
         if (StringUtils.isBlank(content))
         {
@@ -75,7 +80,7 @@ public class DspEngine
         unregister(namespace);
         // 使用唯一资源名，绕过 XMLMapperBuilder 的 loadedResource 去重
         String resource = namespace + "-" + System.nanoTime() + ".xml";
-        String xmlContent = DspValidator.wrap(namespace, content);
+        String xmlContent = DspValidator.mapperXml(namespace, statementId, content);
         try
         {
             XMLMapperBuilder builder = new XMLMapperBuilder(new StringReader(xmlContent), configuration, resource,
@@ -94,7 +99,7 @@ public class DspEngine
             throw new ServiceException("脚本未解析出可执行语句，请检查 <select>/<insert>/<update>/<delete> 标签：" + namespace);
         }
         loadedNamespaces.put(namespace, count);
-        log.info("动态脚本已加载 namespace={}, statements={}", namespace, count);
+        log.info("动态脚本已加载 namespace={}, statementId={}, statements={}", namespace, statementId, count);
     }
 
     /**
@@ -169,8 +174,8 @@ public class DspEngine
     /**
      * 执行脚本语句
      *
-     * @param namespace   命名空间（脚本 slug）
-     * @param statementId 语句 id
+     * @param namespace   命名空间（脚本 ID）
+     * @param statementId 语句 id（脚本 slug），或完整语句 id
      * @param params      参数
      * @param rollback    是否事务回滚预览
      * @return 执行结果

@@ -55,9 +55,9 @@ public interface IDspScriptService
     DspExecutionResult testScript(Long scriptId, String statementId, Map<String, Object> params);
 
     /**
-     * 执行已发布脚本语句（slug 即运行时 namespace，完整语句 id 为 slug.语句名）
+     * 执行已发布脚本的语句（单语句脚本，按 slug 定位；运行时 namespace 取脚本 ID）
      */
-    DspExecutionResult execute(String slug, String statementId, Map<String, Object> params);
+    DspExecutionResult execute(String slug, Map<String, Object> params);
 
     /**
      * 发布脚本，返回新版本号

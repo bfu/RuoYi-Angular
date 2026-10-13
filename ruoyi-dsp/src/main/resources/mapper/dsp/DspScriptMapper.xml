@@ -46,6 +46,12 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where slug = #{slug} limit 1
     </select>
 
+    <select id="selectScriptIdBySlug" parameterType="String" resultType="Long">
+        select script_id
+        from dsp_script
+        where slug = #{slug} limit 1
+    </select>
+
     <select id="selectPublishedScriptList" resultMap="DspScriptResult">
         select script_id, slug, name, description, content, current_version, status, create_by, create_time, update_by, update_time, remark
         from dsp_script

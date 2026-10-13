@@ -1,11 +1,19 @@
 package com.ruoyi.dsp.engine;
 
 import java.io.StringReader;
+import java.io.StringWriter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.SqlSessionFactory;
@@ -23,9 +31,9 @@ import com.ruoyi.common.utils.StringUtils;
 /**
  * 动态脚本校验器
  * <p>
- * 脚本内容仅需编写语句片段（{@code <select>/<insert>/<update>/<delete>} 等，语句 id 只写语句名），
- * XML 声明、DOCTYPE 与 {@code <mapper>} 包装由平台统一生成，并以脚本 slug 作为 namespace，
- * 即运行时完整语句 id 为 {@code slug.语句名}（由平台拼接）。
+ * 脚本内容仅需编写**一条**语句片段（{@code <select>/<insert>/<update>/<delete>}），且**不写 id**：
+ * XML 声明、DOCTYPE、{@code <mapper>} 标签与 namespace 由平台生成（namespace 取脚本 ID），
+ * 语句 id 由平台统一填为脚本 slug，即完整语句 id 为 {@code 脚本ID.slug}。
  * 本类负责：XML 合法性、语句声明完整性，以及基于临时 {@link Configuration} 的
  * MyBatis 语义校验；校验过程不污染运行中的主配置。
  *
@@ -52,6 +60,10 @@ public class DspValidator
     private static final Pattern MAPPER_OPEN_TAG = Pattern.compile("(?is)^\\s*<mapper\\b[^>]*>");
 
     private static final Pattern MAPPER_CLOSE_TAG = Pattern.compile("(?is)</mapper\\s*>\\s*$");
+
+    /** 内容中自行书写的语句 id（平台会忽略并统一使用脚本 slug） */
+    private static final Pattern STATEMENT_ID_ATTRIBUTE = Pattern
+            .compile("(?is)<(select|insert|update|delete)\\b[^>]*\\bid\\s*=");
 
     /** 运行中的 MyBatis 配置，用于复用类型别名等元信息 */
     private final Configuration liveConfiguration;
@@ -92,26 +104,62 @@ public class DspValidator
     }
 
     /**
-     * 将语句片段包装为合法的 Mapper XML
-     *
-     * @param namespace 运行时 namespace（脚本 slug）
-     * @param content   语句片段（可含历史包装，自动剥离）
+     * 内容中是否自行书写了语句 id（平台会忽略）
      */
-    public static String wrap(String namespace, String content)
+    public static boolean hasStatementId(String content)
     {
-        return MAPPER_PROLOG + "<mapper namespace=\"" + namespace + "\">\n" + unwrap(content) + "\n</mapper>";
+        return StringUtils.isNotBlank(content) && STATEMENT_ID_ATTRIBUTE.matcher(content).find();
+    }
+
+    /**
+     * 组装最终 Mapper XML：补 xml 声明、DOCTYPE 与 {@code <mapper>}（namespace 取脚本 ID），
+     * 并把语句 id 统一填为脚本 slug（内容中的 id 一律忽略）。
+     *
+     * @param namespace   运行时 namespace（脚本 ID）
+     * @param statementId 语句 id（脚本 slug）
+     * @param content     语句片段
+     */
+    public static String mapperXml(String namespace, String statementId, String content)
+    {
+        String xml = MAPPER_PROLOG + "<mapper namespace=\"" + namespace + "\">\n" + unwrap(content) + "\n</mapper>";
+        try
+        {
+            Document document = parseXml(xml);
+            Element root = document.getDocumentElement();
+            Element statement = firstStatement(root);
+            if (statement == null)
+            {
+                // 无语句，交由调用方校验/注册时报错
+                return xml;
+            }
+            statement.setAttribute("id", statementId);
+            // 只序列化 mapper 元素，xml 声明与 DOCTYPE 统一沿用平台固定头部
+            return MAPPER_PROLOG + serialize(root);
+        }
+        catch (Exception e)
+        {
+            // 解析失败时返回原始包装，交由 MyBatis 或校验逻辑给出可读错误
+            log.debug("组装 Mapper XML 失败，返回原始包装", e);
+            return xml;
+        }
     }
 
     /**
      * 校验脚本内容
      *
-     * @param slug    脚本标识（作为运行时 namespace，与语句名拼接为完整语句 id）
-     * @param content 语句片段
+     * @param scriptId 脚本 ID（作为运行时 namespace）
+     * @param slug     脚本标识（作为语句 id）
+     * @param content  语句片段（一条语句，无需写 id）
      * @return 校验结果
      */
-    public DspValidationResult validate(String slug, String content)
+    public DspValidationResult validate(Long scriptId, String slug, String content)
     {
         DspValidationResult result = new DspValidationResult();
+        if (scriptId == null)
+        {
+            result.addError("脚本 ID 不能为空");
+            return result;
+        }
         if (StringUtils.isBlank(slug))
         {
             result.addError("脚本标识(slug)不能为空");
@@ -123,21 +171,25 @@ public class DspValidator
             return result;
         }
 
-        String namespace = slug;
+        String namespace = String.valueOf(scriptId);
         result.setNamespace(namespace);
         if (hasWrapper(content))
         {
-            result.addWarning("已自动忽略 <?xml>、DOCTYPE 与 <mapper> 包装，仅需编写 <select>/<insert>/<update>/<delete> 语句");
+            result.addWarning("已自动忽略 <?xml>、DOCTYPE 与 <mapper> 包装，仅需编写一条语句");
+        }
+        if (hasStatementId(content))
+        {
+            result.addWarning("语句 id 由平台按脚本标识(slug)填充，内容中书写的 id 已忽略");
         }
 
         String body = unwrap(content);
         if (StringUtils.isBlank(body))
         {
-            result.addError("未找到任何 <select>/<insert>/<update>/<delete> 语句");
+            result.addError("未找到 <select>/<insert>/<update>/<delete> 语句");
             return result;
         }
 
-        String xml = wrap(namespace, body);
+        String xml = mapperXml(namespace, slug, body);
         Document document;
         try
         {
@@ -150,10 +202,26 @@ public class DspValidator
         }
 
         Element root = document.getDocumentElement();
-        collectStatements(root, result);
-        if (result.getStatements().isEmpty())
+        List<Element> statements = statementElements(root);
+        if (statements.isEmpty())
         {
-            result.addError("未找到任何 <select>/<insert>/<update>/<delete> 语句");
+            result.addError("未找到 <select>/<insert>/<update>/<delete> 语句");
+        }
+        else if (statements.size() > 1)
+        {
+            result.addError("一个脚本只能包含一条语句，当前为 " + statements.size() + " 条");
+        }
+        else
+        {
+            Element statement = statements.get(0);
+            // 实际执行的语句 id 即脚本 slug
+            result.getStatements().add(slug);
+            if ("select".equalsIgnoreCase(statement.getNodeName())
+                    && StringUtils.isBlank(statement.getAttribute("resultType"))
+                    && StringUtils.isBlank(statement.getAttribute("resultMap")))
+            {
+                result.addError("<select> 必须指定 resultType 或 resultMap");
+            }
         }
 
         if (content.contains("${"))
@@ -161,63 +229,56 @@ public class DspValidator
             result.addWarning("检测到 ${} 原始拼接，存在 SQL 注入风险，请确认参数来源可信");
         }
 
-        // 基于临时 Configuration 做 MyBatis 语义校验（复用主配置类型别名）
-        try
+        // 基于临时 Configuration 做 MyBatis 语义校验（复用主配置类型别名）；已有错误时不再叠加
+        if (result.isValid())
         {
-            Configuration scratch = newScratchConfiguration();
-            XMLMapperBuilder builder = new XMLMapperBuilder(new StringReader(xml), scratch,
-                    namespace + "-validate.xml", scratch.getSqlFragments());
-            builder.parse();
-        }
-        catch (Exception e)
-        {
-            result.addError("MyBatis 解析失败：" + rootMessage(e));
+            try
+            {
+                Configuration scratch = newScratchConfiguration();
+                XMLMapperBuilder builder = new XMLMapperBuilder(new StringReader(xml), scratch,
+                        namespace + "-validate.xml", scratch.getSqlFragments());
+                builder.parse();
+            }
+            catch (Exception e)
+            {
+                result.addError("MyBatis 解析失败：" + rootMessage(e));
+            }
         }
         return result;
     }
 
     /**
-     * 收集语句 id，并做基础完整性校验
+     * 取根节点下第一条语句元素
      */
-    private void collectStatements(Element root, DspValidationResult result)
+    private static Element firstStatement(Element root)
     {
+        List<Element> statements = statementElements(root);
+        return statements.isEmpty() ? null : statements.get(0);
+    }
+
+    /**
+     * 取根节点下的全部语句元素
+     */
+    private static List<Element> statementElements(Element root)
+    {
+        List<Element> statements = new ArrayList<>();
+        if (root == null)
+        {
+            return statements;
+        }
         NodeList children = root.getChildNodes();
         for (int i = 0; i < children.getLength(); i++)
         {
             Node node = children.item(i);
-            if (node.getNodeType() != Node.ELEMENT_NODE)
+            if (node.getNodeType() == Node.ELEMENT_NODE && isStatementNode(node.getNodeName()))
             {
-                continue;
-            }
-            String nodeName = node.getNodeName();
-            if (!isStatementNode(nodeName))
-            {
-                continue;
-            }
-            Element element = (Element) node;
-            String id = element.getAttribute("id");
-            if (StringUtils.isBlank(id))
-            {
-                result.addError("<" + nodeName + "> 缺少 id 属性");
-                continue;
-            }
-            if (id.indexOf('.') >= 0)
-            {
-                // 完整语句 id 为 slug.语句名，由平台拼接，内容中只需写语句名
-                result.addError("<" + nodeName + "> 的 id 不能包含 '.'：请只写语句名（slug 前缀由平台拼接）");
-                continue;
-            }
-            result.getStatements().add(id);
-            if ("select".equalsIgnoreCase(nodeName)
-                    && StringUtils.isBlank(element.getAttribute("resultType"))
-                    && StringUtils.isBlank(element.getAttribute("resultMap")))
-            {
-                result.addError("<select id=\"" + id + "\"> 必须指定 resultType 或 resultMap");
+                statements.add((Element) node);
             }
         }
+        return statements;
     }
 
-    private boolean isStatementNode(String nodeName)
+    private static boolean isStatementNode(String nodeName)
     {
         return "select".equalsIgnoreCase(nodeName) || "insert".equalsIgnoreCase(nodeName)
                 || "update".equalsIgnoreCase(nodeName) || "delete".equalsIgnoreCase(nodeName);
@@ -250,9 +311,9 @@ public class DspValidator
     }
 
     /**
-     * 安全解析 XML（禁用外部 DTD/实体，避免校验阶段访问外网）
+     * 安全解析 XML（禁用外部 DTD/实体，避免解析阶段访问外网）
      */
-    private Document parseXml(String xml) throws Exception
+    private static Document parseXml(String xml) throws Exception
     {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setNamespaceAware(false);
@@ -273,7 +334,30 @@ public class DspValidator
         return builder.parse(new InputSource(new StringReader(xml)));
     }
 
-    private void setFeatureQuietly(DocumentBuilderFactory factory, String feature, boolean value)
+    /**
+     * 序列化 DOM 元素（不含 xml 声明与 DOCTYPE）
+     */
+    private static String serialize(Element element) throws Exception
+    {
+        TransformerFactory transformerFactory = TransformerFactory.newInstance();
+        try
+        {
+            transformerFactory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            transformerFactory.setAttribute(XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "");
+        }
+        catch (Exception ignore)
+        {
+            // 部分实现不支持该属性，忽略
+        }
+        Transformer transformer = transformerFactory.newTransformer();
+        transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes");
+        transformer.setOutputProperty(OutputKeys.INDENT, "no");
+        StringWriter writer = new StringWriter();
+        transformer.transform(new DOMSource(element), new StreamResult(writer));
+        return writer.toString();
+    }
+
+    private static void setFeatureQuietly(DocumentBuilderFactory factory, String feature, boolean value)
     {
         try
         {
@@ -285,7 +369,7 @@ public class DspValidator
         }
     }
 
-    private String rootMessage(Throwable throwable)
+    private static String rootMessage(Throwable throwable)
     {
         Throwable current = throwable;
         while (current.getCause() != null && current.getCause() != current)
