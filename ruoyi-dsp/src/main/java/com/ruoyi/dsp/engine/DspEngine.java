@@ -4,12 +4,20 @@ import java.io.ByteArrayInputStream;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
+import org.apache.ibatis.mapping.BoundSql;
 import org.apache.ibatis.mapping.MappedStatement;
+import org.apache.ibatis.mapping.ParameterMapping;
 import org.apache.ibatis.mapping.SqlCommandType;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.type.SimpleTypeRegistry;
@@ -39,6 +47,20 @@ import com.ruoyi.dsp.domain.DspDataSource;
 public class DspEngine
 {
     private static final Logger log = LoggerFactory.getLogger(DspEngine.class);
+
+    /** 翻页子句起始关键字：LIMIT（MySQL/PostgreSQL）或 OFFSET ... FETCH NEXT（Oracle/SQL Server） */
+    private static final Pattern LIMIT_KEYWORD = Pattern.compile("\\blimit\\b");
+
+    private static final Pattern FETCH_KEYWORD = Pattern.compile("\\bfetch\\b");
+
+    private static final Pattern OFFSET_KEYWORD = Pattern.compile("\\boffset\\b");
+
+    /** 翻页子句内允许出现的关键字，其余内容视为子句已结束 */
+    private static final Pattern PAGE_CLAUSE_KEYWORD = Pattern
+            .compile("(?i)\\b(limit|offset|rows|fetch|next|only)\\b");
+
+    /** 可无损转为整数的字符串（LIMIT/OFFSET 只接受整数，字符串会被渲染成字面量导致语法错误） */
+    private static final Pattern INTEGER_PATTERN = Pattern.compile("[+-]?\\d+");
 
     /** 数据源会话管理器（默认库 + 运行时数据源） */
     private final DspDataSourceManager dataSourceManager;
@@ -199,6 +221,7 @@ public class DspEngine
         }
         MappedStatement mappedStatement = configuration.getMappedStatement(fullId);
         Object parameter = buildParameter(mappedStatement, params);
+        parameter = normalizePageParams(mappedStatement, parameter);
         if (rollback)
         {
             return executeWithRollback(holder, fullId, mappedStatement, parameter);
@@ -279,6 +302,215 @@ public class DspEngine
     private boolean isSimpleType(Class<?> type)
     {
         return type != null && (type.isPrimitive() || type.isEnum() || SimpleTypeRegistry.isSimpleType(type));
+    }
+
+    /**
+     * 翻页参数规整：LIMIT / OFFSET 只接受整数，而 JSON 文本与 URL 查询串里的取值天然是字符串，
+     * 客户端预编译（MySQL 默认 useServerPrepStmts=false）会把字符串渲染成字面量，
+     * 拼出的 {@code ... limit '1', '1'} 在数据库端是语法错误。
+     * <p>
+     * 此处<b>仅</b>把翻页子句内占位符上的整数字符串转成 {@link Long}，其余参数（等值条件等）保持原样，
+     * 避免把字符串列上的数字串参数误转成数值比较导致隐式转换与索引失效。
+     *
+     * @param mappedStatement 目标语句
+     * @param parameter       绑定参数（Map 或简单类型标量）
+     * @return 规整后的绑定参数
+     */
+    private Object normalizePageParams(MappedStatement mappedStatement, Object parameter)
+    {
+        if (parameter == null)
+        {
+            return null;
+        }
+        BoundSql boundSql;
+        try
+        {
+            boundSql = mappedStatement.getBoundSql(parameter);
+        }
+        catch (Exception e)
+        {
+            // 动态标签求值失败等问题交由真正执行时报错，此处不兜底
+            log.debug("翻页参数规整时无法构建 SQL：{}", mappedStatement.getId(), e);
+            return parameter;
+        }
+        List<ParameterMapping> mappings = boundSql.getParameterMappings();
+        if (mappings.isEmpty())
+        {
+            return parameter;
+        }
+        Set<String> pageProperties = pagePlaceholderProperties(boundSql.getSql(), mappings);
+        if (pageProperties.isEmpty())
+        {
+            return parameter;
+        }
+        if (parameter instanceof Map)
+        {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> values = (Map<String, Object>) parameter;
+            for (String property : pageProperties)
+            {
+                if (values.containsKey(property))
+                {
+                    values.put(property, toPageNumber(property, values.get(property)));
+                }
+            }
+            return parameter;
+        }
+        // 简单类型参数仅一处占位符：位于翻页子句时直接按类型转换
+        if (pageProperties.contains(mappings.get(0).getProperty()))
+        {
+            return toPageNumber(mappings.get(0).getProperty(), parameter);
+        }
+        return parameter;
+    }
+
+    /**
+     * 翻页占位符取值：整数字符串转 {@link Long}，已是数字或 null 时原样返回，
+     * 其余取值直接给出可读错误，避免数据库抛出难以定位的 SQL 语法错误
+     */
+    private Object toPageNumber(String property, Object value)
+    {
+        if (!(value instanceof String))
+        {
+            return value;
+        }
+        String text = ((String) value).trim();
+        if (INTEGER_PATTERN.matcher(text).matches())
+        {
+            try
+            {
+                return Long.valueOf(text);
+            }
+            catch (NumberFormatException e)
+            {
+                throw new ServiceException("翻页参数超出范围：" + property + " = " + text);
+            }
+        }
+        throw new ServiceException("翻页参数（limit/offset）必须是整数：" + property + " = " + value);
+    }
+
+    /**
+     * 找出翻页子句内占位符对应的参数名
+     *
+     * @param sql      已构建的 SQL（{@code #{}} 已替换为 ?）
+     * @param mappings 占位符与参数的有序映射
+     */
+    private Set<String> pagePlaceholderProperties(String sql, List<ParameterMapping> mappings)
+    {
+        int clauseStart = pageClauseStart(sql);
+        if (clauseStart < 0)
+        {
+            return Collections.emptySet();
+        }
+        int clauseEnd = pageClauseEnd(sql, clauseStart);
+        Set<String> properties = new HashSet<>();
+        int index = 0;
+        for (int i = 0; i < sql.length(); i++)
+        {
+            char c = sql.charAt(i);
+            if (c == '\'')
+            {
+                // 跳过字符串字面量，其中的 ? 不是占位符
+                i = skipLiteral(sql, i);
+            }
+            else if (c == '?')
+            {
+                if (i >= clauseStart && i < clauseEnd && index < mappings.size())
+                {
+                    properties.add(mappings.get(index).getProperty());
+                }
+                index++;
+            }
+        }
+        return properties;
+    }
+
+    /**
+     * 翻页子句起始位置：取最后一处 limit，或 offset ... rows fetch next 中的 offset；
+     * 未检测到翻页子句时返回 -1
+     */
+    private int pageClauseStart(String sql)
+    {
+        String lower = sql.toLowerCase(Locale.ROOT);
+        int limit = lastMatch(LIMIT_KEYWORD, lower);
+        if (limit >= 0)
+        {
+            return limit;
+        }
+        int fetch = lastMatch(FETCH_KEYWORD, lower);
+        if (fetch < 0)
+        {
+            return -1;
+        }
+        int offset = lastBefore(OFFSET_KEYWORD, lower, fetch);
+        return offset < 0 ? fetch : offset;
+    }
+
+    /**
+     * 翻页子句结束位置（不含）：子句内只允许空白、逗号、占位符与翻页关键字，
+     * 其它内容（union 后的语句、子查询右括号等）视为子句已结束
+     */
+    private int pageClauseEnd(String sql, int clauseStart)
+    {
+        int i = clauseStart;
+        while (i < sql.length())
+        {
+            char c = sql.charAt(i);
+            if (Character.isWhitespace(c) || c == ',' || c == '?')
+            {
+                i++;
+                continue;
+            }
+            Matcher keyword = PAGE_CLAUSE_KEYWORD.matcher(sql).region(i, sql.length());
+            if (keyword.lookingAt())
+            {
+                i = keyword.end();
+                continue;
+            }
+            break;
+        }
+        return i;
+    }
+
+    /** 返回字符串字面量结束位置下标（未闭合时返回语句末尾） */
+    private int skipLiteral(String sql, int start)
+    {
+        for (int i = start + 1; i < sql.length(); i++)
+        {
+            if (sql.charAt(i) == '\'')
+            {
+                if (i + 1 < sql.length() && sql.charAt(i + 1) == '\'')
+                {
+                    // '' 为转义写法，继续向后找
+                    i++;
+                    continue;
+                }
+                return i;
+            }
+        }
+        return sql.length() - 1;
+    }
+
+    private int lastMatch(Pattern pattern, String text)
+    {
+        Matcher matcher = pattern.matcher(text);
+        int index = -1;
+        while (matcher.find())
+        {
+            index = matcher.start();
+        }
+        return index;
+    }
+
+    private int lastBefore(Pattern pattern, String text, int end)
+    {
+        Matcher matcher = pattern.matcher(text);
+        int index = -1;
+        while (matcher.find() && matcher.start() < end)
+        {
+            index = matcher.start();
+        }
+        return index;
     }
 
     private List<Map<String, Object>> toRowMaps(List<Object> rows)

@@ -211,6 +211,59 @@ class DspEngineTest
     }
 
     @Test
+    void pageParamsAcceptNumericStrings()
+    {
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG,
+                "<select resultType=\"map\">select id, name from demo_user order by id limit #{offset}, #{size}</select>");
+        Map<String, Object> params = new HashMap<>();
+        // 测试抽屉的 JSON、GET /dsp/exec 的 URL 查询串里取值天然是字符串，
+        // 而 LIMIT 只接受整数（客户端预编译会拼成 limit '0', '1'），引擎需自行规整
+        params.put("offset", "0");
+        params.put("size", "1");
+
+        DspExecutionResult result = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, params, false);
+        assertEquals(1, result.getRows().size());
+        // 占位符取值被规整为整数（H2 对 limit '0', '1' 宽容，故以参数类型为断言）
+        assertEquals(0L, params.get("offset"));
+        assertEquals(1L, params.get("size"));
+    }
+
+    @Test
+    void pageParamsRejectNonNumericValue()
+    {
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG,
+                "<select resultType=\"map\">select id from demo_user limit #{offset}, #{size}</select>");
+        Map<String, Object> params = new HashMap<>();
+        params.put("offset", "0");
+        params.put("size", "abc");
+
+        ServiceException error = assertThrows(ServiceException.class,
+                () -> engine.execute(DEFAULT_DS, NAMESPACE, SLUG, params, false));
+        assertTrue(error.getMessage().contains("必须是整数"));
+    }
+
+    @Test
+    void numericStringOutsidePageClauseStaysString()
+    {
+        // 等值条件上的数字串不能被转成数值：否则字符串列会走隐式类型转换，语义与效率都变差
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG,
+                "<insert>insert into demo_user(id, name) values(#{id}, #{name})</insert>");
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", 7L);
+        row.put("name", "1");
+        engine.execute(DEFAULT_DS, NAMESPACE, SLUG, row, false);
+
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG,
+                "<select resultType=\"map\">select id, name from demo_user where name = #{name}</select>");
+        Map<String, Object> params = new HashMap<>();
+        params.put("name", "1");
+
+        DspExecutionResult result = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, params, false);
+        assertEquals(1, result.getRows().size());
+        assertTrue(result.getRows().get(0).containsValue("1"));
+    }
+
+    @Test
     void runtimeDataSourceIsIsolatedFromDefault()
     {
         // 同一个 slug 分别注册到默认库与运行时数据源，互不影响
