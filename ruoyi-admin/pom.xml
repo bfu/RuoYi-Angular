@@ -54,6 +54,12 @@
             <artifactId>ruoyi-generator</artifactId>
         </dependency>
 
+        <!-- 动态脚本执行平台-->
+        <dependency>
+            <groupId>com.ruoyi</groupId>
+            <artifactId>ruoyi-dsp</artifactId>
+        </dependency>
+
     </dependencies>
 
     <build>
