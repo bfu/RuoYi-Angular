@@ -1,7 +1,8 @@
 package com.ruoyi.dsp.engine;
 
-import java.io.StringReader;
+import java.io.ByteArrayInputStream;
 import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -83,7 +84,8 @@ public class DspEngine
         String xmlContent = DspValidator.mapperXml(namespace, statementId, content);
         try
         {
-            XMLMapperBuilder builder = new XMLMapperBuilder(new StringReader(xmlContent), configuration, resource,
+            XMLMapperBuilder builder = new XMLMapperBuilder(
+                    new ByteArrayInputStream(xmlContent.getBytes(StandardCharsets.UTF_8)), configuration, resource,
                     configuration.getSqlFragments());
             builder.parse();
         }

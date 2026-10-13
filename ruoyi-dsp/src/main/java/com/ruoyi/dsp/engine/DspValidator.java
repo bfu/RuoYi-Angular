@@ -1,7 +1,9 @@
 package com.ruoyi.dsp.engine;
 
+import java.io.ByteArrayInputStream;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -235,7 +237,8 @@ public class DspValidator
             try
             {
                 Configuration scratch = newScratchConfiguration();
-                XMLMapperBuilder builder = new XMLMapperBuilder(new StringReader(xml), scratch,
+                XMLMapperBuilder builder = new XMLMapperBuilder(
+                        new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)), scratch,
                         namespace + "-validate.xml", scratch.getSqlFragments());
                 builder.parse();
             }
