@@ -133,13 +133,37 @@ public class DspDataSourceServiceImpl implements IDspDataSourceService
     public DspDataSourceTestResult testConnection(DspDataSource dspDataSource)
     {
         DspDataSource config = dspDataSource;
-        // 编辑场景未回填密码时，取库中已保存的密码
-        if (config.getDataSourceId() != null && StringUtils.isBlank(config.getPassword()))
+        if (config == null)
+        {
+            return dspDataSourceManager.testConnection(null);
+        }
+        // 列表行只传 ID、或编辑场景未回填密码时，用库中已保存的配置补齐缺失项；
+        // 表单里已填写的值（如编辑时改过的驱动/URL）不会被覆盖，仍按新配置测试
+        if (config.getDataSourceId() != null)
         {
             DspDataSource exist = dspDataSourceMapper.selectDspDataSourceById(config.getDataSourceId());
             if (exist != null)
             {
-                config.setPassword(exist.getPassword());
+                if (StringUtils.isBlank(config.getName()))
+                {
+                    config.setName(exist.getName());
+                }
+                if (StringUtils.isBlank(config.getDriverClassName()))
+                {
+                    config.setDriverClassName(exist.getDriverClassName());
+                }
+                if (StringUtils.isBlank(config.getUrl()))
+                {
+                    config.setUrl(exist.getUrl());
+                }
+                if (StringUtils.isBlank(config.getUsername()))
+                {
+                    config.setUsername(exist.getUsername());
+                }
+                if (StringUtils.isBlank(config.getPassword()))
+                {
+                    config.setPassword(exist.getPassword());
+                }
             }
         }
         DspDataSourceTestResult result = dspDataSourceManager.testConnection(config);
