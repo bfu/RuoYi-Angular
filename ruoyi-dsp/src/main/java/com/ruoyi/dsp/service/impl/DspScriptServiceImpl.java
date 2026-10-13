@@ -1,7 +1,9 @@
 package com.ruoyi.dsp.service.impl;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,6 +45,9 @@ public class DspScriptServiceImpl implements IDspScriptService
     /** 状态：已下线 */
     private static final String STATUS_OFFLINE = "2";
 
+    /** 数据源状态：正常 */
+    private static final String DS_STATUS_NORMAL = "0";
+
     @Autowired
     private DspScriptMapper dspScriptMapper;
 
@@ -57,6 +62,9 @@ public class DspScriptServiceImpl implements IDspScriptService
 
     @Autowired
     private DspEngine dspEngine;
+
+    @Autowired
+    private DspDataSourceManager dspDataSourceManager;
 
     @Override
     public List<DspScript> selectDspScriptList(DspScript dspScript)
@@ -100,6 +108,7 @@ public class DspScriptServiceImpl implements IDspScriptService
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public int updateDspScript(DspScript dspScript)
     {
         DspScript exist = dspScriptMapper.selectDspScriptById(dspScript.getScriptId());
@@ -111,21 +120,32 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             throw new ServiceException("脚本标识(slug)创建后不可修改");
         }
-        if (dspScript.getDataSourceId() != null)
+        Long oldDataSourceId = normalizeDataSourceId(exist.getDataSourceId());
+        Long newDataSourceId = dspScript.getDataSourceId();
+        // 已发布脚本换绑会立即生效，要求目标数据源存在且启用；草稿仅要求存在
+        boolean rebind = newDataSourceId != null && !newDataSourceId.equals(oldDataSourceId)
+                && STATUS_PUBLISHED.equals(exist.getStatus());
+        if (newDataSourceId != null)
         {
-            checkDataSourceExists(dspScript.getDataSourceId());
+            if (rebind)
+            {
+                checkDataSourceUsable(newDataSourceId);
+            }
+            else
+            {
+                checkDataSourceExists(newDataSourceId);
+            }
         }
         // slug 不可变，禁止通过更新语句修改
         dspScript.setSlug(null);
         dspScript.setUpdateBy(SecurityUtils.getUsername());
         int rows = dspScriptMapper.updateDspScript(dspScript);
-        // 已发布脚本换绑数据源：立即热重绑定到新数据源，避免引擎与环境不一致
-        Long newDataSourceId = dspScript.getDataSourceId();
-        if (newDataSourceId != null && !newDataSourceId.equals(normalizeDataSourceId(exist.getDataSourceId()))
-                && STATUS_PUBLISHED.equals(exist.getStatus()))
+        if (rebind)
         {
-            dspEngine.unregister(exist.getDataSourceId(), namespaceOf(exist));
+            // 先在新数据源注册成功，再卸载旧数据源：注册失败会抛异常回滚事务，旧数据源语句保持可用
             dspEngine.register(newDataSourceId, namespaceOf(exist), exist.getSlug(), exist.getContent());
+            dspEngine.unregister(oldDataSourceId, namespaceOf(exist));
+            releaseDataSourceIfIdle(oldDataSourceId);
         }
         return rows;
     }
@@ -134,16 +154,24 @@ public class DspScriptServiceImpl implements IDspScriptService
     @Transactional(rollbackFor = Exception.class)
     public int deleteDspScriptByIds(Long[] scriptIds)
     {
+        Set<Long> affectedDataSourceIds = new HashSet<>();
         for (Long scriptId : scriptIds)
         {
             DspScript exist = dspScriptMapper.selectDspScriptById(scriptId);
             if (exist != null)
             {
-                dspEngine.unregister(exist.getDataSourceId(), namespaceOf(exist));
+                Long dataSourceId = normalizeDataSourceId(exist.getDataSourceId());
+                dspEngine.unregister(dataSourceId, namespaceOf(exist));
+                affectedDataSourceIds.add(dataSourceId);
             }
         }
         dspScriptVersionMapper.deleteVersionByScriptIds(scriptIds);
-        return dspScriptMapper.deleteDspScriptByIds(scriptIds);
+        int rows = dspScriptMapper.deleteDspScriptByIds(scriptIds);
+        for (Long dataSourceId : affectedDataSourceIds)
+        {
+            releaseDataSourceIfIdle(dataSourceId);
+        }
+        return rows;
     }
 
     @Override
@@ -205,6 +233,12 @@ public class DspScriptServiceImpl implements IDspScriptService
         String namespace = String.valueOf(route.getScriptId());
         if (!dspEngine.hasNamespace(dataSourceId, namespace))
         {
+            // 未加载时按「数据源不可用 → 已下线 → 未发布」依次给出准确原因
+            checkDataSourceUsable(dataSourceId);
+            if (STATUS_OFFLINE.equals(route.getStatus()))
+            {
+                throw new ServiceException("脚本已下线：" + slug);
+            }
             throw new ServiceException("脚本未发布或不可用：" + slug);
         }
         return dspEngine.execute(dataSourceId, namespace, slug, params, false);
@@ -229,6 +263,8 @@ public class DspScriptServiceImpl implements IDspScriptService
             throw new ServiceException("脚本校验未通过：" + String.join("；", validation.getErrors()));
         }
         Long dataSourceId = normalizeDataSourceId(script.getDataSourceId());
+        // 发布前先确认数据源可用，避免校验通过后才发现不可用（此时事务已写入版本）
+        checkDataSourceUsable(dataSourceId);
         int newVersion = (script.getCurrentVersion() == null ? 0 : script.getCurrentVersion()) + 1;
         // 历史版本全部置为非当前
         dspScriptVersionMapper.updateVersionStatusByScriptId(scriptId, "0");
@@ -275,6 +311,7 @@ public class DspScriptServiceImpl implements IDspScriptService
             throw new ServiceException("目标版本内容校验未通过：" + String.join("；", validation.getErrors()));
         }
         Long dataSourceId = normalizeDataSourceId(script.getDataSourceId());
+        checkDataSourceUsable(dataSourceId);
         dspScriptVersionMapper.updateVersionStatusByScriptId(scriptId, "0");
         dspScriptVersionMapper.markVersionCurrent(versionId);
 
@@ -298,7 +335,9 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             throw new ServiceException("脚本不存在");
         }
-        dspEngine.unregister(script.getDataSourceId(), namespaceOf(script));
+        Long dataSourceId = normalizeDataSourceId(script.getDataSourceId());
+        dspEngine.unregister(dataSourceId, namespaceOf(script));
+        releaseDataSourceIfIdle(dataSourceId);
 
         DspScript update = new DspScript();
         update.setScriptId(scriptId);
@@ -373,7 +412,7 @@ public class DspScriptServiceImpl implements IDspScriptService
     }
 
     /**
-     * 校验绑定的数据源存在（是否停用在发布/执行时由引擎判断）
+     * 校验绑定的数据源存在（草稿保存等尚未生效的场景，不校验启用状态）
      */
     private void checkDataSourceExists(Long dataSourceId)
     {
@@ -385,6 +424,38 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             throw new ServiceException("数据源不存在：" + dataSourceId);
         }
+    }
+
+    /**
+     * 校验绑定的数据源存在且启用（发布、换绑、执行等会立即生效的场景）
+     */
+    private void checkDataSourceUsable(Long dataSourceId)
+    {
+        if (DspDataSourceManager.isDefault(dataSourceId))
+        {
+            return;
+        }
+        DspDataSource config = dspDataSourceMapper.selectDspDataSourceById(dataSourceId);
+        if (config == null)
+        {
+            throw new ServiceException("脚本绑定的数据源不存在：" + dataSourceId);
+        }
+        if (!DS_STATUS_NORMAL.equals(config.getStatus()))
+        {
+            throw new ServiceException("脚本绑定的数据源已停用：" + config.getName());
+        }
+    }
+
+    /**
+     * 数据源上已无可执行语句时回收其运行时连接池（默认库不回收，下次使用时按需重建）
+     */
+    private void releaseDataSourceIfIdle(Long dataSourceId)
+    {
+        if (DspDataSourceManager.isDefault(dataSourceId) || dspEngine.hasAnyNamespace(dataSourceId))
+        {
+            return;
+        }
+        dspDataSourceManager.evict(dataSourceId);
     }
 
     /**

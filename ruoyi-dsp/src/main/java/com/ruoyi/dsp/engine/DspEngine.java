@@ -165,6 +165,15 @@ public class DspEngine
     }
 
     /**
+     * 指定数据源上是否还有已加载的语句（用于判断其运行时连接池可否回收）
+     */
+    public boolean hasAnyNamespace(Long dataSourceId)
+    {
+        Map<String, Integer> namespaces = loadedNamespaces.get(dsKey(dataSourceId));
+        return namespaces != null && !namespaces.isEmpty();
+    }
+
+    /**
      * 执行脚本语句
      *
      * @param dataSourceId 数据源 ID（{@code 0}/{@code null} 为默认主库）

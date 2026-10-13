@@ -232,4 +232,18 @@ class DspEngineTest
         // 未登记的数据源在注册阶段即报错，避免语句落到错误的库
         assertThrows(ServiceException.class, () -> engine.register(404L, NAMESPACE, SLUG, XML));
     }
+
+    @Test
+    void hasAnyNamespaceTracksEachDataSource()
+    {
+        // 用于判断数据源连接池可否回收：仅当该数据源上再无语句时返回 false
+        assertFalse(engine.hasAnyNamespace(DEFAULT_DS));
+
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
+        assertTrue(engine.hasAnyNamespace(DEFAULT_DS));
+        assertFalse(engine.hasAnyNamespace(RUNTIME_DS));
+
+        engine.unregister(DEFAULT_DS, NAMESPACE);
+        assertFalse(engine.hasAnyNamespace(DEFAULT_DS));
+    }
 }
