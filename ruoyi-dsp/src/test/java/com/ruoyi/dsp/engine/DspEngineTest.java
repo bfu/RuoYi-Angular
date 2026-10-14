@@ -283,6 +283,62 @@ class DspEngineTest
     }
 
     @Test
+    void pageParamsRejectNegativeValue()
+    {
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG,
+                "<select resultType=\"map\">select id, name from demo_user order by id limit #{offset}, #{size}</select>");
+        Map<String, Object> params = new HashMap<>();
+        params.put("offset", "-1");
+        params.put("size", "1");
+
+        ServiceException error = assertThrows(ServiceException.class,
+                () -> engine.execute(DEFAULT_DS, NAMESPACE, SLUG, params, false));
+        assertTrue(error.getMessage().contains("不能为负数"));
+    }
+
+    @Test
+    void pageParamsRejectOversizedSize()
+    {
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG,
+                "<select resultType=\"map\">select id, name from demo_user order by id limit #{offset}, #{size}</select>");
+        Map<String, Object> params = new HashMap<>();
+        params.put("offset", "0");
+        params.put("size", "100000");
+
+        ServiceException error = assertThrows(ServiceException.class,
+                () -> engine.execute(DEFAULT_DS, NAMESPACE, SLUG, params, false));
+        assertTrue(error.getMessage().contains("上限"));
+    }
+
+    @Test
+    void pageParamsRejectFloatingValue()
+    {
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG,
+                "<select resultType=\"map\">select id, name from demo_user order by id limit #{offset}, #{size}</select>");
+        Map<String, Object> params = new HashMap<>();
+        params.put("offset", "0");
+        // JSON 里的 5.0 会解析成浮点，落到 LIMIT 同样是语法错误
+        params.put("size", 5.0d);
+
+        ServiceException error = assertThrows(ServiceException.class,
+                () -> engine.execute(DEFAULT_DS, NAMESPACE, SLUG, params, false));
+        assertTrue(error.getMessage().contains("必须是整数"));
+    }
+
+    @Test
+    void limitKeywordInsideLiteralIsNotPageClause()
+    {
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG,
+                "<select resultType=\"map\">select id, name from demo_user where name = 'limit' or name = #{name}</select>");
+        Map<String, Object> params = new HashMap<>();
+        params.put("name", "alice");
+
+        // 'limit' 只是字面量：普通字符串参数不能被误判成非法翻页参数
+        DspExecutionResult result = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, params, false);
+        assertEquals(1, result.getRows().size());
+    }
+
+    @Test
     void numericStringOutsidePageClauseStaysString()
     {
         // 等值条件上的数字串不能被转成数值：否则字符串列会走隐式类型转换，语义与效率都变差

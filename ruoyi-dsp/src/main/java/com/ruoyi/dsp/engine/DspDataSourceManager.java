@@ -8,6 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import javax.sql.DataSource;
+import jakarta.annotation.PreDestroy;
 import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.SqlSessionFactory;
@@ -159,6 +160,16 @@ public class DspDataSourceManager
                 holder.close();
             }
         }
+    }
+
+    /**
+     * 应用关闭时回收全部运行时连接池，避免 Druid 的探活与空闲检测线程残留
+     */
+    @PreDestroy
+    public void destroy()
+    {
+        evictAll();
+        log.info("动态脚本运行时数据源已全部回收");
     }
 
     /**

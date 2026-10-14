@@ -2,6 +2,7 @@ package com.ruoyi.dsp.engine;
 
 import java.io.ByteArrayInputStream;
 import java.lang.reflect.Field;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -63,6 +64,12 @@ public class DspEngine
 
     /** 可无损转为整数的字符串（LIMIT/OFFSET 只接受整数，字符串会被渲染成字面量导致语法错误） */
     private static final Pattern INTEGER_PATTERN = Pattern.compile("[+-]?\\d+");
+
+    /** 页大小参数名（生成器固定用 size，手工脚本常见 pageSize），用于限制单次返回行数 */
+    private static final Pattern PAGE_SIZE_PROPERTY = Pattern.compile("(?i).*size.*");
+
+    /** 单次返回行数上限，避免一次把整表拉进内存 */
+    private static final long MAX_PAGE_SIZE = 10000L;
 
     /**
      * 随脚本一起增删的 MyBatis 注册表：语句、resultMap、parameterMap 与 sql 片段。
@@ -431,28 +438,62 @@ public class DspEngine
     }
 
     /**
-     * 翻页占位符取值：整数字符串转 {@link Long}，已是数字或 null 时原样返回，
+     * 翻页占位符取值：整数字符串转 {@link Long}、整数类型直接取值，并校验非负与页大小上限，
      * 其余取值直接给出可读错误，避免数据库抛出难以定位的 SQL 语法错误
      */
     private Object toPageNumber(String property, Object value)
     {
-        if (!(value instanceof String))
+        Long number = toIntegralNumber(property, value);
+        if (number == null)
         {
+            // 非数值取值（null、布尔等）原样透传，交由数据库报错
             return value;
         }
-        String text = ((String) value).trim();
-        if (INTEGER_PATTERN.matcher(text).matches())
+        if (number < 0)
         {
-            try
-            {
-                return Long.valueOf(text);
-            }
-            catch (NumberFormatException e)
-            {
-                throw new ServiceException("翻页参数超出范围：" + property + " = " + text);
-            }
+            throw new ServiceException("翻页参数不能为负数：" + property + " = " + value);
         }
-        throw new ServiceException("翻页参数（limit/offset）必须是整数：" + property + " = " + value);
+        if (PAGE_SIZE_PROPERTY.matcher(property).matches() && number > MAX_PAGE_SIZE)
+        {
+            throw new ServiceException("翻页参数超出上限（最大 " + MAX_PAGE_SIZE + "）：" + property + " = " + value);
+        }
+        return number;
+    }
+
+    /**
+     * 把翻页取值规整为整数：整数字符串按整数文本解析、整数类型直接取值，
+     * 浮点类型与非法文本给出可读错误（LIMIT/OFFSET 只接受整数）
+     *
+     * @return 整数值；取值不是数值类型时返回 {@code null}
+     */
+    private Long toIntegralNumber(String property, Object value)
+    {
+        if (value instanceof String text)
+        {
+            String trimmed = text.trim();
+            if (INTEGER_PATTERN.matcher(trimmed).matches())
+            {
+                try
+                {
+                    return Long.valueOf(trimmed);
+                }
+                catch (NumberFormatException e)
+                {
+                    throw new ServiceException("翻页参数超出范围：" + property + " = " + trimmed);
+                }
+            }
+            throw new ServiceException("翻页参数（limit/offset）必须是整数：" + property + " = " + value);
+        }
+        if (value instanceof Number numberValue)
+        {
+            if (numberValue instanceof Double || numberValue instanceof Float || numberValue instanceof BigDecimal)
+            {
+                // JSON 里的 5.0 会解析成浮点，落到 LIMIT 同样是语法错误
+                throw new ServiceException("翻页参数（limit/offset）必须是整数：" + property + " = " + value);
+            }
+            return numberValue.longValue();
+        }
+        return null;
     }
 
     /**
