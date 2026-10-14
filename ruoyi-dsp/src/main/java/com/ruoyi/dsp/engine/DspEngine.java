@@ -6,12 +6,14 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
@@ -62,6 +64,13 @@ public class DspEngine
     /** 可无损转为整数的字符串（LIMIT/OFFSET 只接受整数，字符串会被渲染成字面量导致语法错误） */
     private static final Pattern INTEGER_PATTERN = Pattern.compile("[+-]?\\d+");
 
+    /**
+     * 随脚本一起增删的 MyBatis 注册表：语句、resultMap、parameterMap 与 sql 片段。
+     * 注册键统一以「脚本 ID.」开头，重发布时必须连旧的一并摘掉，否则 StrictMap 会报重复键。
+     */
+    private static final String[] NAMESPACE_REGISTRIES = { "mappedStatements", "resultMaps", "parameterMaps",
+            "sqlFragments" };
+
     /** 数据源会话管理器（默认库 + 运行时数据源） */
     private final DspDataSourceManager dataSourceManager;
 
@@ -75,13 +84,17 @@ public class DspEngine
 
     /**
      * 注册（或覆盖）指定数据源下某个 namespace 的脚本语句
+     * <p>
+     * 覆盖采用「摘旧注册留底 → 解析 → 失败原样回放」：解析或校验失败时旧语句会被放回，
+     * 一次失败的重新发布不会再让正在运行的已发布版本凭空消失。整个过程持有该数据源的写锁，
+     * 期间执行侧拿不到读锁，也就读不到「语句暂时不存在」的中间状态。
      *
      * @param dataSourceId 数据源 ID（{@code 0} 或 {@code null} 表示默认主库）
      * @param namespace    命名空间（脚本 ID）
      * @param statementId  语句 id（脚本 slug）
      * @param content      语句片段（xml 声明、DOCTYPE、mapper 包装与 id 由平台统一生成）
      */
-    public synchronized void register(Long dataSourceId, String namespace, String statementId, String content)
+    public void register(Long dataSourceId, String namespace, String statementId, String content)
     {
         if (StringUtils.isBlank(namespace))
         {
@@ -96,38 +109,52 @@ public class DspEngine
             throw new ServiceException("脚本内容为空，无法加载：" + namespace);
         }
         DspDataSourceManager.Holder holder = dataSourceManager.resolve(dataSourceId);
-        // 先移除旧语句，避免 StrictMap 重复键异常
-        unregister(dataSourceId, namespace);
-        // 使用唯一资源名，绕过 XMLMapperBuilder 的 loadedResource 去重
-        String resource = key(dataSourceId) + "-" + namespace + "-" + System.nanoTime() + ".xml";
         String xmlContent = DspValidator.mapperXml(namespace, statementId, content);
+        Lock lock = holder.writeLock();
+        lock.lock();
         try
         {
-            XMLMapperBuilder builder = new XMLMapperBuilder(
-                    new ByteArrayInputStream(xmlContent.getBytes(StandardCharsets.UTF_8)), holder.getConfiguration(),
-                    resource, holder.getConfiguration().getSqlFragments());
-            builder.parse();
+            Configuration configuration = holder.getConfiguration();
+            Map<String, Map<String, Object>> removed = detachNamespace(configuration, namespace);
+            try
+            {
+                // 使用唯一资源名，绕过 XMLMapperBuilder 的 loadedResource 去重
+                String resource = key(dataSourceId) + "-" + namespace + "-" + System.nanoTime() + ".xml";
+                XMLMapperBuilder builder = new XMLMapperBuilder(
+                        new ByteArrayInputStream(xmlContent.getBytes(StandardCharsets.UTF_8)), configuration, resource,
+                        configuration.getSqlFragments());
+                builder.parse();
+                int count = countStatements(configuration, namespace);
+                if (count == 0)
+                {
+                    throw new ServiceException(
+                            "脚本未解析出可执行语句，请检查 <select>/<insert>/<update>/<delete> 标签：" + namespace);
+                }
+                namespacesOf(dataSourceId).put(namespace, count);
+                log.info("动态脚本已加载 dataSourceId={}, namespace={}, statementId={}, statements={}", dataSourceId,
+                        namespace, statementId, count);
+            }
+            catch (Exception e)
+            {
+                restoreNamespace(configuration, namespace, removed);
+                if (e instanceof ServiceException serviceException)
+                {
+                    throw serviceException;
+                }
+                log.error("动态脚本加载失败 dataSourceId={}, namespace={}", dataSourceId, namespace, e);
+                throw new ServiceException("动态脚本加载失败：" + rootMessage(e));
+            }
         }
-        catch (Exception e)
+        finally
         {
-            log.error("动态脚本加载失败 dataSourceId={}, namespace={}", dataSourceId, namespace, e);
-            throw new ServiceException("动态脚本加载失败：" + rootMessage(e));
+            lock.unlock();
         }
-        int count = countStatements(holder.getConfiguration(), namespace);
-        if (count == 0)
-        {
-            unregister(dataSourceId, namespace);
-            throw new ServiceException("脚本未解析出可执行语句，请检查 <select>/<insert>/<update>/<delete> 标签：" + namespace);
-        }
-        namespacesOf(dataSourceId).put(namespace, count);
-        log.info("动态脚本已加载 dataSourceId={}, namespace={}, statementId={}, statements={}", dataSourceId,
-                namespace, statementId, count);
     }
 
     /**
-     * 卸载指定数据源下某个 namespace 的全部语句与 sql 片段
+     * 卸载指定数据源下某个 namespace 的全部注册项（语句、resultMap、sql 片段）
      */
-    public synchronized void unregister(Long dataSourceId, String namespace)
+    public void unregister(Long dataSourceId, String namespace)
     {
         Map<String, Integer> namespaces = namespacesOf(dataSourceId);
         if (StringUtils.isBlank(namespace) || !namespaces.containsKey(namespace))
@@ -136,8 +163,17 @@ public class DspEngine
         }
         try
         {
-            Configuration configuration = dataSourceManager.resolve(dataSourceId).getConfiguration();
-            removeStatements(configuration, namespace);
+            DspDataSourceManager.Holder holder = dataSourceManager.resolve(dataSourceId);
+            Lock lock = holder.writeLock();
+            lock.lock();
+            try
+            {
+                detachNamespace(holder.getConfiguration(), namespace);
+            }
+            finally
+            {
+                lock.unlock();
+            }
         }
         catch (Exception e)
         {
@@ -151,18 +187,38 @@ public class DspEngine
     /**
      * 卸载指定数据源下的全部语句（数据源停用/删除/变更时调用）
      */
-    public synchronized void unregisterAll(Long dataSourceId)
+    public void unregisterAll(Long dataSourceId)
     {
         Map<String, Integer> namespaces = loadedNamespaces.get(dsKey(dataSourceId));
         if (namespaces == null || namespaces.isEmpty())
         {
             return;
         }
-        for (String namespace : new ArrayList<>(namespaces.keySet()))
+        try
         {
-            unregister(dataSourceId, namespace);
+            DspDataSourceManager.Holder holder = dataSourceManager.resolve(dataSourceId);
+            Lock lock = holder.writeLock();
+            lock.lock();
+            try
+            {
+                Configuration configuration = holder.getConfiguration();
+                for (String namespace : new ArrayList<>(namespaces.keySet()))
+                {
+                    detachNamespace(configuration, namespace);
+                }
+            }
+            finally
+            {
+                lock.unlock();
+            }
         }
+        catch (Exception e)
+        {
+            log.debug("卸载全部语句时无法获取数据源配置 dataSourceId={}", dataSourceId, e);
+        }
+        namespaces.clear();
         loadedNamespaces.remove(dsKey(dataSourceId));
+        log.info("数据源语句已全部卸载 dataSourceId={}", dataSourceId);
     }
 
     /**
@@ -213,20 +269,30 @@ public class DspEngine
             throw new ServiceException("namespace 与 statementId 不能为空");
         }
         DspDataSourceManager.Holder holder = dataSourceManager.resolve(dataSourceId);
-        Configuration configuration = holder.getConfiguration();
-        String fullId = statementId.indexOf('.') >= 0 ? statementId : namespace + "." + statementId;
-        if (!configuration.hasStatement(fullId))
+        // 读锁：与注册/卸载互斥，避免执行期间撞上半更新的语句注册表（拿一次语句超时或读不到）
+        Lock lock = holder.readLock();
+        lock.lock();
+        try
         {
-            throw new ServiceException("语句不存在：" + fullId);
+            Configuration configuration = holder.getConfiguration();
+            String fullId = statementId.indexOf('.') >= 0 ? statementId : namespace + "." + statementId;
+            if (!configuration.hasStatement(fullId))
+            {
+                throw new ServiceException("语句不存在：" + fullId);
+            }
+            MappedStatement mappedStatement = configuration.getMappedStatement(fullId);
+            Object parameter = buildParameter(mappedStatement, params);
+            parameter = normalizePageParams(mappedStatement, parameter);
+            if (rollback)
+            {
+                return executeWithRollback(holder, fullId, mappedStatement, parameter);
+            }
+            return doExecute(holder, fullId, mappedStatement, parameter, false);
         }
-        MappedStatement mappedStatement = configuration.getMappedStatement(fullId);
-        Object parameter = buildParameter(mappedStatement, params);
-        parameter = normalizePageParams(mappedStatement, parameter);
-        if (rollback)
+        finally
         {
-            return executeWithRollback(holder, fullId, mappedStatement, parameter);
+            lock.unlock();
         }
-        return doExecute(holder, fullId, mappedStatement, parameter, false);
     }
 
     /**
@@ -564,50 +630,74 @@ public class DspEngine
     }
 
     /**
-     * 从 MyBatis 配置中移除指定 namespace 的语句与 sql 片段
+     * 从 MyBatis 配置中摘除指定 namespace 的全部注册项并留底
+     *
+     * @param configuration MyBatis 配置
+     * @param namespace     命名空间（脚本 ID）
+     * @return 注册表字段名 → (注册键 → 原值)；注册失败时用 {@link #restoreNamespace} 原样回放
      */
-    private void removeStatements(Configuration configuration, String namespace)
+    private Map<String, Map<String, Object>> detachNamespace(Configuration configuration, String namespace)
     {
         String prefix = namespace + ".";
-        Map<String, Object> statements = getField(configuration, "mappedStatements");
-        if (statements != null)
+        Map<String, Map<String, Object>> removed = new LinkedHashMap<>();
+        for (String registry : NAMESPACE_REGISTRIES)
         {
-            List<String> keys = new ArrayList<>();
-            for (Map.Entry<String, Object> entry : statements.entrySet())
+            Map<String, Object> entries = getField(configuration, registry);
+            Map<String, Object> backup = new LinkedHashMap<>();
+            if (entries != null)
             {
-                String statementKey = entry.getKey();
-                if (statementKey.startsWith(prefix))
+                Iterator<Map.Entry<String, Object>> iterator = entries.entrySet().iterator();
+                while (iterator.hasNext())
                 {
-                    keys.add(statementKey);
-                }
-                else if (statementKey.indexOf('.') < 0 && entry.getValue() instanceof MappedStatement value
-                        && value.getId() != null && value.getId().startsWith(prefix))
-                {
-                    // 清理指向本命名空间的短名映射
-                    keys.add(statementKey);
+                    Map.Entry<String, Object> entry = iterator.next();
+                    if (belongsToNamespace(entry.getKey(), entry.getValue(), prefix))
+                    {
+                        backup.put(entry.getKey(), entry.getValue());
+                        iterator.remove();
+                    }
                 }
             }
-            for (String statementKey : keys)
+            removed.put(registry, backup);
+        }
+        return removed;
+    }
+
+    /**
+     * 回放一次失败注册之前摘除的注册项：先清掉本次解析可能已写入的半成品，再把旧值补回
+     */
+    private void restoreNamespace(Configuration configuration, String namespace,
+            Map<String, Map<String, Object>> removed)
+    {
+        detachNamespace(configuration, namespace);
+        for (Map.Entry<String, Map<String, Object>> registry : removed.entrySet())
+        {
+            Map<String, Object> entries = getField(configuration, registry.getKey());
+            if (entries == null)
             {
-                statements.remove(statementKey);
+                continue;
+            }
+            for (Map.Entry<String, Object> entry : registry.getValue().entrySet())
+            {
+                // 短名映射会随完整 id 一并补回，此处只补缺失的键，避免触发 StrictMap 重复键异常
+                if (!entries.containsKey(entry.getKey()))
+                {
+                    entries.put(entry.getKey(), entry.getValue());
+                }
             }
         }
-        Map<String, Object> fragments = getField(configuration, "sqlFragments");
-        if (fragments != null)
+    }
+
+    /**
+     * 注册键是否属于该命名空间：完整 id 以「脚本 ID.」开头，或为指向本命名空间的短名映射
+     */
+    private boolean belongsToNamespace(String key, Object value, String prefix)
+    {
+        if (key.startsWith(prefix))
         {
-            List<String> keys = new ArrayList<>();
-            for (String fragmentKey : fragments.keySet())
-            {
-                if (fragmentKey.startsWith(prefix))
-                {
-                    keys.add(fragmentKey);
-                }
-            }
-            for (String fragmentKey : keys)
-            {
-                fragments.remove(fragmentKey);
-            }
+            return true;
         }
+        return key.indexOf('.') < 0 && value instanceof MappedStatement statement && statement.getId() != null
+                && statement.getId().startsWith(prefix);
     }
 
     private Map<String, Integer> namespacesOf(Long dataSourceId)

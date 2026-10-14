@@ -19,6 +19,8 @@ import org.mockito.InOrder;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.ruoyi.common.core.domain.entity.SysUser;
 import com.ruoyi.common.core.domain.model.LoginUser;
 import com.ruoyi.common.exception.ServiceException;
@@ -98,6 +100,30 @@ class DspScriptServiceImplTest
     void tearDown()
     {
         SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    void deleteUnloadsStatementsOnlyAfterCommit()
+    {
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(publishedScript(RUNTIME_DS));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try
+        {
+            service.deleteDspScriptByIds(new Long[] { SCRIPT_ID });
+
+            // 事务提交前不得卸载运行时语句；删除回滚时脚本应保持可用
+            verify(dspScriptMapper).deleteDspScriptByIds(any());
+            verify(dspEngine, never()).unregister(any(), any());
+
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(TransactionSynchronization::afterCommit);
+            verify(dspEngine).unregister(RUNTIME_DS, String.valueOf(SCRIPT_ID));
+        }
+        finally
+        {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test

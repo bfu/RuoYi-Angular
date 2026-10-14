@@ -160,6 +160,46 @@ class DspEngineTest
     }
 
     @Test
+    void reRegisterWithResultMapDoesNotHitDuplicateKey()
+    {
+        String content = "<resultMap id=\"demo\" type=\"map\">"
+                + "<id column=\"id\" property=\"id\"/><result column=\"name\" property=\"name\"/>"
+                + "</resultMap><select resultMap=\"demo\">select id, name from demo_user order by id</select>";
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, content);
+        // resultMap 同样以 namespace 为前缀注册，重发布时必须一并摘掉，否则 StrictMap 报重复键
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, content.replace("order by id", "order by id asc"));
+
+        DspExecutionResult result = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, null, false);
+        assertEquals(1, result.getRows().size());
+    }
+
+    @Test
+    void failedReRegisterKeepsPreviousStatementsWhenNoStatementParsed()
+    {
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
+
+        // 内容解析不出语句：注册失败，但已加载的旧语句必须原样保留
+        assertThrows(ServiceException.class,
+                () -> engine.register(DEFAULT_DS, NAMESPACE, SLUG, "<mapper namespace=\"legacy\"></mapper>"));
+        assertTrue(engine.hasNamespace(DEFAULT_DS, NAMESPACE));
+
+        DspExecutionResult result = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, null, false);
+        assertEquals(1, result.getRows().size());
+    }
+
+    @Test
+    void failedReRegisterKeepsPreviousStatementsWhenXmlBroken()
+    {
+        engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);
+
+        assertThrows(ServiceException.class, () -> engine.register(DEFAULT_DS, NAMESPACE, SLUG,
+                "<select resultType=\"map\">select id from demo_user"));
+
+        DspExecutionResult result = engine.execute(DEFAULT_DS, NAMESPACE, SLUG, null, false);
+        assertEquals(1, result.getRows().size());
+    }
+
+    @Test
     void unregisterRemovesStatements()
     {
         engine.register(DEFAULT_DS, NAMESPACE, SLUG, XML);

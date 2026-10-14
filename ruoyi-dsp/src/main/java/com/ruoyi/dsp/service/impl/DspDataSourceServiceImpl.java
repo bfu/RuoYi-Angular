@@ -101,10 +101,20 @@ public class DspDataSourceServiceImpl implements IDspDataSourceService
         {
             throw new ServiceException("修改数据源'" + dspDataSource.getName() + "'失败，数据源名称已存在");
         }
+        // 只有连接相关配置（驱动/URL/账号/口令/启停状态）变化才需要重建运行时连接池；
+        // 改名称、备注等元信息时重建，会让该数据源上的已发布脚本瞬时不可用
+        boolean runtimeChanged = isRuntimeChanged(exist, dspDataSource);
         dspDataSource.setUpdateBy(SecurityUtils.getUsername());
         int rows = dspDataSourceMapper.updateDspDataSource(dspDataSource);
-        // 配置变更：先卸载旧语句、销毁旧连接池，再按新配置重载绑定脚本
-        refreshRuntime(exist.getDataSourceId(), true);
+        if (runtimeChanged)
+        {
+            // 提交后再重建：卸载旧语句、销毁旧连接池，并按新配置重载绑定脚本
+            DspAfterCommit.run(() -> refreshRuntime(exist.getDataSourceId(), true));
+        }
+        else
+        {
+            log.debug("数据源 {} 仅元信息变更，跳过连接池重建", exist.getDataSourceId());
+        }
         return rows;
     }
 
@@ -112,6 +122,10 @@ public class DspDataSourceServiceImpl implements IDspDataSourceService
     @Transactional(rollbackFor = Exception.class)
     public int deleteDspDataSourceByIds(Long[] dataSourceIds)
     {
+        if (dataSourceIds == null || dataSourceIds.length == 0)
+        {
+            return 0;
+        }
         for (Long dataSourceId : dataSourceIds)
         {
             int count = dspScriptMapper.countScriptByDataSourceId(dataSourceId);
@@ -122,11 +136,16 @@ public class DspDataSourceServiceImpl implements IDspDataSourceService
                 throw new ServiceException("数据源'" + name + "'已被 " + count + " 个脚本引用，无法删除");
             }
         }
-        for (Long dataSourceId : dataSourceIds)
+        int rows = dspDataSourceMapper.deleteDspDataSourceByIds(dataSourceIds);
+        // 提交后再回收运行时会话，避免删除失败回滚时内存里的连接池已经被销毁
+        DspAfterCommit.run(() ->
         {
-            refreshRuntime(dataSourceId, false);
-        }
-        return dspDataSourceMapper.deleteDspDataSourceByIds(dataSourceIds);
+            for (Long dataSourceId : dataSourceIds)
+            {
+                refreshRuntime(dataSourceId, false);
+            }
+        });
+        return rows;
     }
 
     @Override
@@ -193,5 +212,35 @@ public class DspDataSourceServiceImpl implements IDspDataSourceService
             return;
         }
         dspScriptService.reloadByDataSource(dataSourceId);
+    }
+
+    /**
+     * 本次更新是否触及运行时连接配置：驱动、URL、账号、口令或启停状态
+     * <p>
+     * 其余字段（名称、备注等）只影响展示，重建连接池会让在用脚本瞬时不可用，因此不触发。
+     */
+    private boolean isRuntimeChanged(DspDataSource exist, DspDataSource update)
+    {
+        return changedText(exist.getStatus(), update.getStatus())
+                || changedText(exist.getDriverClassName(), update.getDriverClassName())
+                || changedText(exist.getUrl(), update.getUrl())
+                || changedText(exist.getUsername(), update.getUsername())
+                || changedPassword(exist.getPassword(), update.getPassword());
+    }
+
+    /**
+     * 更新 SQL 对空串不落库（{@code <if test="xxx != null and xxx != ''">}），故空串视为未提交
+     */
+    private boolean changedText(String oldValue, String newValue)
+    {
+        return StringUtils.isNotBlank(newValue) && !newValue.equals(oldValue);
+    }
+
+    /**
+     * 口令列只判 null（允许清空口令），因此空串也算变更
+     */
+    private boolean changedPassword(String oldValue, String newValue)
+    {
+        return newValue != null && !newValue.equals(oldValue);
     }
 }

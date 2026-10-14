@@ -5,6 +5,8 @@ import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import javax.sql.DataSource;
 import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.session.Configuration;
@@ -361,6 +363,15 @@ public class DspDataSourceManager
         /** 运行时连接池，默认库为 null */
         private final DruidDataSource pool;
 
+        /**
+         * 语句注册表的读写锁：注册/卸载取写锁、执行取读锁。
+         * <p>
+         * MyBatis 的 {@code mappedStatements} 等注册表是 ConcurrentHashMap，单次读写本身安全，
+         * 但「摘旧语句 → 解析新语句 → 写入」整体不是原子的：不加锁时并发执行会读到半更新状态，
+         * 重发布期间的读请求还会被误判成「语句不存在」。
+         */
+        private final ReentrantReadWriteLock registryLock = new ReentrantReadWriteLock();
+
         Holder(Long dataSourceId, Configuration configuration, SqlSessionTemplate sqlSession,
                 PlatformTransactionManager transactionManager, DruidDataSource pool)
         {
@@ -394,6 +405,18 @@ public class DspDataSourceManager
         public DataSource getDataSource()
         {
             return pool;
+        }
+
+        /** 注册/卸载语句时持有的写锁 */
+        public Lock writeLock()
+        {
+            return registryLock.writeLock();
+        }
+
+        /** 执行语句时持有的读锁 */
+        public Lock readLock()
+        {
+            return registryLock.readLock();
         }
 
         private void close()

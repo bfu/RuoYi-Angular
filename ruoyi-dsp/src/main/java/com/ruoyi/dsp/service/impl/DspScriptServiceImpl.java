@@ -1,9 +1,9 @@
 package com.ruoyi.dsp.service.impl;
 
-import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -156,23 +156,29 @@ public class DspScriptServiceImpl implements IDspScriptService
     @Transactional(rollbackFor = Exception.class)
     public int deleteDspScriptByIds(Long[] scriptIds)
     {
-        Set<Long> affectedDataSourceIds = new HashSet<>();
+        if (scriptIds == null || scriptIds.length == 0)
+        {
+            return 0;
+        }
+        // 先登记待卸载的运行时语句（数据源 → 命名空间），库删成功提交后再动内存
+        Map<Long, List<String>> pendingNamespaces = new LinkedHashMap<>();
         for (Long scriptId : scriptIds)
         {
             DspScript exist = dspScriptMapper.selectDspScriptById(scriptId);
             if (exist != null)
             {
                 Long dataSourceId = normalizeDataSourceId(exist.getDataSourceId());
-                dspEngine.unregister(dataSourceId, namespaceOf(exist));
-                affectedDataSourceIds.add(dataSourceId);
+                pendingNamespaces.computeIfAbsent(dataSourceId, key -> new ArrayList<>()).add(namespaceOf(exist));
             }
         }
         dspScriptVersionMapper.deleteVersionByScriptIds(scriptIds);
         int rows = dspScriptMapper.deleteDspScriptByIds(scriptIds);
-        for (Long dataSourceId : affectedDataSourceIds)
+        // 提交后再卸载：删除失败回滚时，内存里的已发布脚本仍保持可用
+        DspAfterCommit.run(() -> pendingNamespaces.forEach((dataSourceId, namespaces) ->
         {
+            namespaces.forEach(namespace -> dspEngine.unregister(dataSourceId, namespace));
             releaseDataSourceIfIdle(dataSourceId);
-        }
+        }));
         return rows;
     }
 
@@ -341,6 +347,7 @@ public class DspScriptServiceImpl implements IDspScriptService
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public int offline(Long scriptId, String operator)
     {
         DspScript script = dspScriptMapper.selectDspScriptById(scriptId);
@@ -349,14 +356,18 @@ public class DspScriptServiceImpl implements IDspScriptService
             throw new ServiceException("脚本不存在");
         }
         Long dataSourceId = normalizeDataSourceId(script.getDataSourceId());
-        dspEngine.unregister(dataSourceId, namespaceOf(script));
-        releaseDataSourceIfIdle(dataSourceId);
-
         DspScript update = new DspScript();
         update.setScriptId(scriptId);
         update.setStatus(STATUS_OFFLINE);
         update.setUpdateBy(operator);
-        return dspScriptMapper.updateDspScript(update);
+        int rows = dspScriptMapper.updateDspScript(update);
+        // 提交后再卸载：状态更新失败回滚时，内存里的语句保持可用，不会出现「库里已发布、内存没有」
+        DspAfterCommit.run(() ->
+        {
+            dspEngine.unregister(dataSourceId, namespaceOf(script));
+            releaseDataSourceIfIdle(dataSourceId);
+        });
+        return rows;
     }
 
     @Override
