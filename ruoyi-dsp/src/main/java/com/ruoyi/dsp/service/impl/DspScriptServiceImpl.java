@@ -197,15 +197,23 @@ public class DspScriptServiceImpl implements IDspScriptService
     @Override
     public DspValidationResult validateScript(Long scriptId, String content)
     {
+        return validateScript(scriptId, content, null);
+    }
+
+    @Override
+    public DspValidationResult validateScript(Long scriptId, String content, Long dataSourceId)
+    {
         DspScript exist = dspScriptMapper.selectDspScriptById(scriptId);
         if (exist == null)
         {
             throw new ServiceException("脚本不存在");
         }
         String scriptContent = StringUtils.isBlank(content) ? exist.getContent() : content;
-        // 带上绑定数据源的数据库类型，跨方言写法在校验阶段就能提示
+        // 带上目标数据源的数据库类型，跨方言写法在校验阶段就能提示；
+        // 未指定数据源时用脚本当前绑定值，回滚校验历史版本内容时会指定版本绑定的数据源
+        Long effectiveDataSourceId = dataSourceId == null ? exist.getDataSourceId() : dataSourceId;
         return dspValidator.validate(scriptId, exist.getSlug(), scriptContent,
-                databaseTypeOf(exist.getDataSourceId()));
+                databaseTypeOf(effectiveDataSourceId));
     }
 
     @Override

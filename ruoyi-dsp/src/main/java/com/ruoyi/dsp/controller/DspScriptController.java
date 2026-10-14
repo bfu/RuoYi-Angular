@@ -108,7 +108,7 @@ public class DspScriptController extends BaseController
     }
 
     /**
-     * 校验脚本内容（content 为空时校验库中草稿）
+     * 校验脚本内容（content 为空时校验库中草稿；dataSourceId 用于按指定数据源判定方言，缺省用脚本绑定值）
      */
     @PreAuthorize("@ss.hasPermi('dsp:script:validate')")
     @PostMapping("/validate")
@@ -116,7 +116,9 @@ public class DspScriptController extends BaseController
     {
         Long scriptId = toLong(body.get("scriptId"), "scriptId");
         Object content = body.get("content");
-        return success(dspScriptService.validateScript(scriptId, content == null ? null : String.valueOf(content)));
+        Object dataSourceId = body.get("dataSourceId");
+        return success(dspScriptService.validateScript(scriptId, content == null ? null : String.valueOf(content),
+                dataSourceId == null ? null : toLong(dataSourceId, "dataSourceId")));
     }
 
     /**

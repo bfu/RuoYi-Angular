@@ -184,6 +184,29 @@ class DspScriptServiceImplTest
     }
 
     @Test
+    void validateScriptUsesGivenDataSourceForDialectCheck()
+    {
+        // 回滚场景：脚本当前绑默认主库，但要校验的历史版本绑定在 RUNTIME_DS 上
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(publishedScript(0L));
+        when(dspDataSourceMapper.selectDspDataSourceById(RUNTIME_DS)).thenReturn(dataSource(RUNTIME_DS, "报表库", "0"));
+
+        service.validateScript(SCRIPT_ID, CONTENT, RUNTIME_DS);
+
+        verify(dspValidator).validate(SCRIPT_ID, SLUG, CONTENT, "postgresql");
+    }
+
+    @Test
+    void validateScriptFallsBackToBoundDataSourceWhenGivenNone()
+    {
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(publishedScript(RUNTIME_DS));
+        when(dspDataSourceMapper.selectDspDataSourceById(RUNTIME_DS)).thenReturn(dataSource(RUNTIME_DS, "报表库", "0"));
+
+        service.validateScript(SCRIPT_ID, CONTENT, null);
+
+        verify(dspValidator).validate(SCRIPT_ID, SLUG, CONTENT, "postgresql");
+    }
+
+    @Test
     void reloadAllUnloadsRuntimeRegistryBeforeReloading()
     {
         when(dspEngine.loadedDataSourceIds()).thenReturn(new LinkedHashSet<>(List.of(RUNTIME_DS, 0L)));

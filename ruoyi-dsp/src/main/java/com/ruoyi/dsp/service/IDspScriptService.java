@@ -45,9 +45,21 @@ public interface IDspScriptService
     int deleteDspScriptByIds(Long[] scriptIds);
 
     /**
-     * 校验脚本内容（content 为空时校验库中草稿）
+     * 校验脚本内容（content 为空时校验库中草稿），方言按脚本当前绑定的数据源判定
      */
     DspValidationResult validateScript(Long scriptId, String content);
+
+    /**
+     * 校验脚本内容，并可按指定数据源判定方言
+     * <p>
+     * 回滚场景校验的是历史版本内容，其实际执行位置是版本绑定的数据源，需要用该数据源判定方言。
+     *
+     * @param scriptId     脚本 ID
+     * @param content      语句片段，为空时校验库中草稿
+     * @param dataSourceId 用于方言判定的数据源 ID（{@code 0} 为默认主库）；
+     *                     为 {@code null} 时用脚本当前绑定的数据源
+     */
+    DspValidationResult validateScript(Long scriptId, String content, Long dataSourceId);
 
     /**
      * 事务回滚测试脚本语句（使用草稿内容，隔离到临时命名空间）
