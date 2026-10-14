@@ -59,6 +59,18 @@ public class DspDataSourceServiceImpl implements IDspDataSourceService
     }
 
     @Override
+    public DspDataSource selectDspDataSourceDetail(Long dataSourceId)
+    {
+        DspDataSource source = dspDataSourceMapper.selectDspDataSourceById(dataSourceId);
+        if (source != null)
+        {
+            // 口令不出接口：运行时需要口令的路径（连接池构建、测试连接兜底）一律直接走 mapper
+            source.setPassword(null);
+        }
+        return source;
+    }
+
+    @Override
     public List<DspDataSource> selectEnabledDataSourceList()
     {
         return dspDataSourceMapper.selectEnabledDataSourceList();

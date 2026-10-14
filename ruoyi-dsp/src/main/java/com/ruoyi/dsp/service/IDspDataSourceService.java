@@ -17,9 +17,14 @@ public interface IDspDataSourceService
     List<DspDataSource> selectDspDataSourceList(DspDataSource dspDataSource);
 
     /**
-     * 根据数据源ID查询（含密码）
+     * 根据数据源ID查询（含密码，仅供内部取连接配置使用）
      */
     DspDataSource selectDspDataSourceById(Long dataSourceId);
+
+    /**
+     * 查询数据源详情（供页面回显）：出于安全不回传数据库口令，编辑时留空即表示沿用已保存口令
+     */
+    DspDataSource selectDspDataSourceDetail(Long dataSourceId);
 
     /**
      * 查询全部正常状态的数据源（供脚本绑定下拉）

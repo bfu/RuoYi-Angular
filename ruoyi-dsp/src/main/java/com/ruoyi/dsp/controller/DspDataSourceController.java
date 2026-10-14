@@ -55,13 +55,13 @@ public class DspDataSourceController extends BaseController
     }
 
     /**
-     * 获取数据源详细信息（含密码）
+     * 获取数据源详细信息（不回传数据库口令）
      */
     @PreAuthorize("@ss.hasPermi('dsp:datasource:query')")
     @GetMapping("/{dataSourceId}")
     public AjaxResult getInfo(@PathVariable Long dataSourceId)
     {
-        return success(dspDataSourceService.selectDspDataSourceById(dataSourceId));
+        return success(dspDataSourceService.selectDspDataSourceDetail(dataSourceId));
     }
 
     /**
