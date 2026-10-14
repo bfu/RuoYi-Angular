@@ -1,6 +1,7 @@
 package com.ruoyi.dsp.service.impl;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +15,8 @@ import com.ruoyi.common.utils.DateUtils;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.dsp.domain.DspDataSource;
+import com.ruoyi.dsp.cluster.DspReloadNotifier;
+import com.ruoyi.dsp.cluster.DspReloadScope;
 import com.ruoyi.dsp.domain.DspScript;
 import com.ruoyi.dsp.domain.DspScriptVersion;
 import com.ruoyi.dsp.engine.DspDataSourceManager;
@@ -65,6 +68,9 @@ public class DspScriptServiceImpl implements IDspScriptService
 
     @Autowired
     private DspDataSourceManager dspDataSourceManager;
+
+    @Autowired
+    private DspReloadNotifier reloadNotifier;
 
     @Override
     public List<DspScript> selectDspScriptList(DspScript dspScript)
@@ -148,6 +154,7 @@ public class DspScriptServiceImpl implements IDspScriptService
             // 当前版本快照同步为运行时数据源，保证「回滚到当前版本」是幂等的
             dspScriptVersionMapper.updateCurrentVersionDataSourceId(exist.getScriptId(), newDataSourceId);
             releaseDataSourceIfIdle(oldDataSourceId);
+            notifyPeers(DspReloadScope.SCRIPT, List.of(newDataSourceId, oldDataSourceId));
         }
         return rows;
     }
@@ -174,11 +181,16 @@ public class DspScriptServiceImpl implements IDspScriptService
         dspScriptVersionMapper.deleteVersionByScriptIds(scriptIds);
         int rows = dspScriptMapper.deleteDspScriptByIds(scriptIds);
         // 提交后再卸载：删除失败回滚时，内存里的已发布脚本仍保持可用
-        DspAfterCommit.run(() -> pendingNamespaces.forEach((dataSourceId, namespaces) ->
+        DspAfterCommit.run(() ->
         {
-            namespaces.forEach(namespace -> dspEngine.unregister(dataSourceId, namespace));
-            releaseDataSourceIfIdle(dataSourceId);
-        }));
+            pendingNamespaces.forEach((dataSourceId, namespaces) ->
+            {
+                namespaces.forEach(namespace -> dspEngine.unregister(dataSourceId, namespace));
+                releaseDataSourceIfIdle(dataSourceId);
+            });
+            // 已在提交后回调里，直接广播：再注册事务同步回调不会被执行
+            reloadNotifier.notify(DspReloadScope.SCRIPT, pendingNamespaces.keySet());
+        });
         return rows;
     }
 
@@ -298,6 +310,7 @@ public class DspScriptServiceImpl implements IDspScriptService
 
         // 数据源不存在/停用或脚本非法时抛异常，事务回滚
         dspEngine.register(dataSourceId, namespaceOf(script), script.getSlug(), script.getContent());
+        notifyPeers(DspReloadScope.SCRIPT, List.of(dataSourceId));
         return newVersion;
     }
 
@@ -343,6 +356,8 @@ public class DspScriptServiceImpl implements IDspScriptService
             dspEngine.unregister(currentDataSourceId, namespaceOf(script));
             releaseDataSourceIfIdle(currentDataSourceId);
         }
+        // 回滚可能同时换了数据源，新旧两边都要通知
+        notifyPeers(DspReloadScope.SCRIPT, List.of(targetDataSourceId, currentDataSourceId));
         return version.getVersion();
     }
 
@@ -366,6 +381,8 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             dspEngine.unregister(dataSourceId, namespaceOf(script));
             releaseDataSourceIfIdle(dataSourceId);
+            // 已在提交后回调里，直接广播：再注册事务同步回调不会被执行
+            reloadNotifier.notify(DspReloadScope.SCRIPT, List.of(dataSourceId));
         });
         return rows;
     }
@@ -385,6 +402,11 @@ public class DspScriptServiceImpl implements IDspScriptService
     @Override
     public void reloadAll()
     {
+        // 先清空运行时注册再按库重建：数据库里已删除/已下线的脚本不能继续可执行
+        for (Long dataSourceId : dspEngine.loadedDataSourceIds())
+        {
+            dspEngine.unregisterAll(dataSourceId);
+        }
         List<DspScript> published = dspScriptMapper.selectPublishedScriptList();
         int success = 0;
         for (DspScript script : published)
@@ -401,15 +423,25 @@ public class DspScriptServiceImpl implements IDspScriptService
             }
             catch (Exception e)
             {
-                log.error("启动加载动态脚本失败 slug={}", script.getSlug(), e);
+                log.error("加载动态脚本失败 slug={}", script.getSlug(), e);
             }
         }
-        log.info("动态脚本平台初始化完成，已加载 {}/{} 个已发布脚本", success, published.size());
+        log.info("动态脚本重载完成，已加载 {}/{} 个已发布脚本", success, published.size());
+    }
+
+    @Override
+    public void reloadAllAndBroadcast()
+    {
+        reloadAll();
+        // 手动整体重载顺带通知其余实例，省去逐实例调用
+        reloadNotifier.notify(DspReloadScope.ALL, List.of());
     }
 
     @Override
     public void reloadByDataSource(Long dataSourceId)
     {
+        // 先卸载该数据源下的现有注册，避免已删除/已下线的脚本残留在内存
+        dspEngine.unregisterAll(dataSourceId);
         List<DspScript> published = dspScriptMapper.selectPublishedScriptListByDataSourceId(dataSourceId);
         int success = 0;
         for (DspScript script : published)
@@ -425,6 +457,20 @@ public class DspScriptServiceImpl implements IDspScriptService
             }
         }
         log.info("数据源 {} 脚本重载完成，已加载 {}/{}", dataSourceId, success, published.size());
+    }
+
+    /**
+     * 通知其余实例重载运行时注册
+     * <p>
+     * 只在事务提交后广播：否则其余实例会读到变更前的库内容而保持旧状态。已经处于提交后回调里的场景
+     * 要直接调用 {@code reloadNotifier.notify}，此时再注册事务同步回调不会被执行。
+     *
+     * @param scope         重载范围
+     * @param dataSourceIds 受影响的数据源ID
+     */
+    private void notifyPeers(DspReloadScope scope, Collection<Long> dataSourceIds)
+    {
+        DspAfterCommit.run(() -> reloadNotifier.notify(scope, dataSourceIds));
     }
 
     /**

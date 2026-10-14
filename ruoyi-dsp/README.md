@@ -9,7 +9,8 @@
 - 校验：XML 合法性 + MyBatis 语义校验，返回可读错误与安全告警。
 - 测试：事务回滚预览——查询可看结果、DML 仅返回影响行数且不落库。
 - 发布/版本历史：每次发布留档到独立版本表，版本号递增，支持回滚到任意历史版本。
-- 动态热加载：启动加载全部已发布脚本，发布/回滚/下线增量更新内存注册表，无需重启。
+- 动态热加载：启动加载全部已发布脚本，发布/回滚/换绑/下线/删除增量更新内存注册表，无需重启。
+- 多实例一致：运行时注册在各实例内存中，变更经 Redis 广播通知其余实例重载（见「多实例部署」）。
 - 统一执行 API：`POST /dsp/exec/{slug}`。
 
 ## 目录
@@ -111,9 +112,24 @@ Content-Type: application/json
 | POST | `/dsp/script/publish` | 发布（`{scriptId}`） |
 | POST | `/dsp/script/rollback` | 回滚（`{scriptId, versionId}`） |
 | POST | `/dsp/script/offline` | 下线（`{scriptId}`） |
-| POST | `/dsp/script/reload` | 重新加载全部已发布脚本 |
+| POST | `/dsp/script/reload` | 重新加载全部已发布脚本（先清后建，并广播其余实例） |
 | GET | `/dsp/script/versions/{scriptId}` | 版本列表 |
 | GET | `/dsp/script/version/{versionId}` | 版本详情（含内容快照） |
+
+## 多实例部署
+
+运行时语句注册（MyBatis Configuration）只在各实例的 JVM 内存中，数据库里只有脚本定义与版本。因此脚本的发布、
+回滚、换绑、下线、删除以及数据源连接配置变更，都会在数据库事务提交后经 Redis 频道广播，其余实例收到后按数据库
+重建本地注册，无需逐个实例调用接口。整体重载（`/dsp/script/reload`）同样会广播，且会先清空本地注册再按库重建，
+库里已删除或已下线的脚本不会残留在内存中继续可执行。
+
+| 配置项 | 默认值 | 说明 |
+| ---- | ---- | ---- |
+| `dsp.cluster.enabled` | `true` | 是否开启广播；单实例部署可关闭，关闭后退化为「只在本实例生效」 |
+| `dsp.cluster.reload-channel` | `ruoyi:dsp:reload` | 广播频道；同一 Redis 上的多个应用需分别配置，避免相互触发重载 |
+
+广播失败（如 Redis 不可用）只记录错误日志，不影响本实例的变更；此时其余实例会保持旧状态，可调用
+`POST /dsp/script/reload` 或重启修正。
 
 ## 构建与测试
 

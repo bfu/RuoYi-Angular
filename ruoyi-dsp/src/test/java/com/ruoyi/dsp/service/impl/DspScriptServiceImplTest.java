@@ -11,6 +11,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +27,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import com.ruoyi.common.core.domain.entity.SysUser;
 import com.ruoyi.common.core.domain.model.LoginUser;
 import com.ruoyi.common.exception.ServiceException;
+import com.ruoyi.dsp.cluster.DspReloadNotifier;
+import com.ruoyi.dsp.cluster.DspReloadScope;
 import com.ruoyi.dsp.domain.DspDataSource;
 import com.ruoyi.dsp.domain.DspScript;
 import com.ruoyi.dsp.domain.DspScriptVersion;
@@ -69,6 +74,8 @@ class DspScriptServiceImplTest
 
     private DspDataSourceManager dspDataSourceManager;
 
+    private DspReloadNotifier reloadNotifier;
+
     private DspScriptServiceImpl service;
 
     @BeforeEach
@@ -80,6 +87,7 @@ class DspScriptServiceImplTest
         dspValidator = mock(DspValidator.class);
         dspEngine = mock(DspEngine.class);
         dspDataSourceManager = mock(DspDataSourceManager.class);
+        reloadNotifier = mock(DspReloadNotifier.class);
         when(dspValidator.validate(anyLong(), any(), any())).thenReturn(new DspValidationResult());
         service = new DspScriptServiceImpl();
         ReflectionTestUtils.setField(service, "dspScriptMapper", dspScriptMapper);
@@ -88,6 +96,7 @@ class DspScriptServiceImplTest
         ReflectionTestUtils.setField(service, "dspValidator", dspValidator);
         ReflectionTestUtils.setField(service, "dspEngine", dspEngine);
         ReflectionTestUtils.setField(service, "dspDataSourceManager", dspDataSourceManager);
+        ReflectionTestUtils.setField(service, "reloadNotifier", reloadNotifier);
         // 保存脚本需要登录用户
         SysUser user = new SysUser();
         user.setUserName("admin");
@@ -112,18 +121,83 @@ class DspScriptServiceImplTest
         {
             service.deleteDspScriptByIds(new Long[] { SCRIPT_ID });
 
-            // 事务提交前不得卸载运行时语句；删除回滚时脚本应保持可用
+            // 事务提交前不得卸载运行时语句，也不广播；删除回滚时脚本应保持可用
             verify(dspScriptMapper).deleteDspScriptByIds(any());
             verify(dspEngine, never()).unregister(any(), any());
+            verify(reloadNotifier, never()).notify(any(), any());
 
             TransactionSynchronizationManager.getSynchronizations()
                     .forEach(TransactionSynchronization::afterCommit);
             verify(dspEngine).unregister(RUNTIME_DS, String.valueOf(SCRIPT_ID));
+            verify(reloadNotifier).notify(DspReloadScope.SCRIPT, Set.of(RUNTIME_DS));
         }
         finally
         {
             TransactionSynchronizationManager.clearSynchronization();
         }
+    }
+
+    @Test
+    void offlineUnloadsAndBroadcastsOnlyAfterCommit()
+    {
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(publishedScript(RUNTIME_DS));
+        when(dspScriptMapper.updateDspScript(any())).thenReturn(1);
+
+        TransactionSynchronizationManager.initSynchronization();
+        try
+        {
+            service.offline(SCRIPT_ID, "admin");
+
+            verify(reloadNotifier, never()).notify(any(), any());
+
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(TransactionSynchronization::afterCommit);
+            verify(dspEngine).unregister(RUNTIME_DS, String.valueOf(SCRIPT_ID));
+            verify(reloadNotifier).notify(DspReloadScope.SCRIPT, List.of(RUNTIME_DS));
+        }
+        finally
+        {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void reloadAllUnloadsRuntimeRegistryBeforeReloading()
+    {
+        when(dspEngine.loadedDataSourceIds()).thenReturn(new LinkedHashSet<>(List.of(RUNTIME_DS, 0L)));
+        when(dspScriptMapper.selectPublishedScriptList()).thenReturn(List.of(publishedScript(RUNTIME_DS)));
+
+        service.reloadAll();
+
+        // 先清空运行时注册，避免库里已删除/已下线的脚本继续可执行
+        InOrder order = inOrder(dspEngine);
+        order.verify(dspEngine).unregisterAll(RUNTIME_DS);
+        order.verify(dspEngine).unregisterAll(0L);
+        order.verify(dspEngine).register(RUNTIME_DS, String.valueOf(SCRIPT_ID), SLUG, CONTENT);
+    }
+
+    @Test
+    void reloadByDataSourceUnloadsStaleStatementsFirst()
+    {
+        when(dspScriptMapper.selectPublishedScriptListByDataSourceId(RUNTIME_DS))
+                .thenReturn(List.of(publishedScript(RUNTIME_DS)));
+
+        service.reloadByDataSource(RUNTIME_DS);
+
+        InOrder order = inOrder(dspEngine);
+        order.verify(dspEngine).unregisterAll(RUNTIME_DS);
+        order.verify(dspEngine).register(RUNTIME_DS, String.valueOf(SCRIPT_ID), SLUG, CONTENT);
+    }
+
+    @Test
+    void reloadAllAndBroadcastNotifiesOtherInstances()
+    {
+        when(dspEngine.loadedDataSourceIds()).thenReturn(Set.of());
+        when(dspScriptMapper.selectPublishedScriptList()).thenReturn(List.of());
+
+        service.reloadAllAndBroadcast();
+
+        verify(reloadNotifier).notify(DspReloadScope.ALL, List.of());
     }
 
     @Test

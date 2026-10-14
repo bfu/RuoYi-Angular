@@ -170,14 +170,14 @@ public class DspScriptController extends BaseController
     }
 
     /**
-     * 重新加载全部已发布脚本
+     * 重新加载全部已发布脚本（多实例部署时会一并通知其余实例重载）
      */
     @PreAuthorize("@ss.hasPermi('dsp:script:publish')")
     @Log(title = "动态脚本", businessType = BusinessType.OTHER)
     @PostMapping("/reload")
     public AjaxResult reload()
     {
-        dspScriptService.reloadAll();
+        dspScriptService.reloadAllAndBroadcast();
         return success();
     }
 

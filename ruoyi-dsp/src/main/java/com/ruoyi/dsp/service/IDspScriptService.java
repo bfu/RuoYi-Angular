@@ -85,12 +85,20 @@ public interface IDspScriptService
     DspScriptVersion selectVersionById(Long versionId);
 
     /**
-     * 重新加载全部已发布脚本到引擎
+     * 重新加载全部已发布脚本到引擎：先清空运行时注册，再按数据库重建
+     * （数据库里已删除/已下线的脚本不能继续可执行）
      */
     void reloadAll();
 
     /**
-     * 重新加载指定数据源下已发布脚本到引擎（数据源变更后调用）
+     * 重新加载全部已发布脚本，并广播其余实例一起重载
+     */
+    void reloadAllAndBroadcast();
+
+    /**
+     * 重新加载指定数据源下的已发布脚本：先清空该数据源的运行时注册，再按数据库重建
+     *
+     * @param dataSourceId 数据源ID
      */
     void reloadByDataSource(Long dataSourceId);
 }

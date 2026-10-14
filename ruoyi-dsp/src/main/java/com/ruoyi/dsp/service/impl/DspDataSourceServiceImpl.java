@@ -1,5 +1,6 @@
 package com.ruoyi.dsp.service.impl;
 
+import java.util.Arrays;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,6 +10,8 @@ import org.springframework.transaction.annotation.Transactional;
 import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.common.utils.StringUtils;
+import com.ruoyi.dsp.cluster.DspReloadNotifier;
+import com.ruoyi.dsp.cluster.DspReloadScope;
 import com.ruoyi.dsp.domain.DspDataSource;
 import com.ruoyi.dsp.engine.DspDataSourceManager;
 import com.ruoyi.dsp.engine.DspDataSourceTestResult;
@@ -45,6 +48,9 @@ public class DspDataSourceServiceImpl implements IDspDataSourceService
 
     @Autowired
     private IDspScriptService dspScriptService;
+
+    @Autowired
+    private DspReloadNotifier reloadNotifier;
 
     @Override
     public List<DspDataSource> selectDspDataSourceList(DspDataSource dspDataSource)
@@ -120,8 +126,13 @@ public class DspDataSourceServiceImpl implements IDspDataSourceService
         int rows = dspDataSourceMapper.updateDspDataSource(dspDataSource);
         if (runtimeChanged)
         {
-            // 提交后再重建：卸载旧语句、销毁旧连接池，并按新配置重载绑定脚本
-            DspAfterCommit.run(() -> refreshRuntime(exist.getDataSourceId(), true));
+            // 提交后再重建：卸载旧语句、销毁旧连接池，并按新配置重载绑定脚本；
+            // 同时广播其余实例重建（新增数据源无需广播，其余实例首次用到时会懒加载）
+            DspAfterCommit.run(() ->
+            {
+                refreshRuntime(exist.getDataSourceId(), true);
+                reloadNotifier.notify(DspReloadScope.DATASOURCE, List.of(exist.getDataSourceId()));
+            });
         }
         else
         {
@@ -156,6 +167,7 @@ public class DspDataSourceServiceImpl implements IDspDataSourceService
             {
                 refreshRuntime(dataSourceId, false);
             }
+            reloadNotifier.notify(DspReloadScope.DATASOURCE, Arrays.asList(dataSourceIds));
         });
         return rows;
     }

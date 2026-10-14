@@ -259,6 +259,14 @@ public class DspEngine
     }
 
     /**
+     * 已加载过脚本的数据源ID（含默认主库 {@code 0}），用于整体重载前先清空运行时注册
+     */
+    public Set<Long> loadedDataSourceIds()
+    {
+        return new HashSet<>(loadedNamespaces.keySet());
+    }
+
+    /**
      * 执行脚本语句
      *
      * @param dataSourceId 数据源 ID（{@code 0}/{@code null} 为默认主库）
