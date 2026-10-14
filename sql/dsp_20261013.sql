@@ -3,8 +3,8 @@
 -- 版本：1.0
 -- 内容：脚本定义表、脚本版本历史表、数据源定义表、菜单与按钮权限
 -- 前置：已执行 sql/ry_*.sql、sql/quartz.sql
--- 说明：由 dsp_20261013.sql、dsp_datasource_20261013.sql、dsp_generator_20261013.sql、
---        dsp_version_datasource_20261013.sql 合并而来，面向全新部署（drop 后重建）
+-- 说明：由 dsp_datasource_20261013.sql、dsp_generator_20261013.sql、
+--        dsp_version_datasource_20261013.sql 三个增量脚本合并而来，面向全新部署（drop 后重建）
 -- 日期：2026-10-13
 -- ----------------------------
 

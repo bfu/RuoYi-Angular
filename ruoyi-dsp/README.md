@@ -28,7 +28,7 @@ ruoyi-dsp/
 
 ## 初始化
 
-在 `sql/ry_*.sql`、`sql/quartz.sql` 之后执行 `sql/dsp_1.0.sql`（ruoyi-dsp 1.0 基线脚本）建表并注册菜单/权限。
+在 `sql/ry_*.sql`、`sql/quartz.sql` 之后执行 `sql/dsp_20261013.sql`（ruoyi-dsp 1.0 基线脚本）建表并注册菜单/权限。
 
 ## 权限标识
 
