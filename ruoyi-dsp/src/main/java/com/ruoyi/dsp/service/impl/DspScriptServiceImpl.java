@@ -203,7 +203,9 @@ public class DspScriptServiceImpl implements IDspScriptService
             throw new ServiceException("脚本不存在");
         }
         String scriptContent = StringUtils.isBlank(content) ? exist.getContent() : content;
-        return dspValidator.validate(scriptId, exist.getSlug(), scriptContent);
+        // 带上绑定数据源的数据库类型，跨方言写法在校验阶段就能提示
+        return dspValidator.validate(scriptId, exist.getSlug(), scriptContent,
+                databaseTypeOf(exist.getDataSourceId()));
     }
 
     @Override
@@ -214,7 +216,8 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             throw new ServiceException("脚本不存在");
         }
-        DspValidationResult validation = dspValidator.validate(scriptId, exist.getSlug(), exist.getContent());
+        DspValidationResult validation = dspValidator.validate(scriptId, exist.getSlug(), exist.getContent(),
+                databaseTypeOf(exist.getDataSourceId()));
         if (!validation.isValid())
         {
             throw new ServiceException("脚本校验未通过：" + String.join("；", validation.getErrors()));
@@ -277,12 +280,13 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             throw new ServiceException("脚本内容为空，无法发布");
         }
-        DspValidationResult validation = dspValidator.validate(scriptId, script.getSlug(), script.getContent());
+        Long dataSourceId = normalizeDataSourceId(script.getDataSourceId());
+        DspValidationResult validation = dspValidator.validate(scriptId, script.getSlug(), script.getContent(),
+                databaseTypeOf(dataSourceId));
         if (!validation.isValid())
         {
             throw new ServiceException("脚本校验未通过：" + String.join("；", validation.getErrors()));
         }
-        Long dataSourceId = normalizeDataSourceId(script.getDataSourceId());
         // 发布前先确认数据源可用，避免校验通过后才发现不可用（此时事务已写入版本）
         checkDataSourceUsable(dataSourceId);
         int newVersion = (script.getCurrentVersion() == null ? 0 : script.getCurrentVersion()) + 1;
@@ -328,14 +332,15 @@ public class DspScriptServiceImpl implements IDspScriptService
         {
             throw new ServiceException("目标版本不存在或不属于该脚本");
         }
-        DspValidationResult validation = dspValidator.validate(scriptId, script.getSlug(), version.getContent());
+        // 回滚即还原该版本发布时的完整状态：内容 + 数据源
+        Long currentDataSourceId = normalizeDataSourceId(script.getDataSourceId());
+        Long targetDataSourceId = normalizeDataSourceId(version.getDataSourceId());
+        DspValidationResult validation = dspValidator.validate(scriptId, script.getSlug(), version.getContent(),
+                databaseTypeOf(targetDataSourceId));
         if (!validation.isValid())
         {
             throw new ServiceException("目标版本内容校验未通过：" + String.join("；", validation.getErrors()));
         }
-        // 回滚即还原该版本发布时的完整状态：内容 + 数据源
-        Long currentDataSourceId = normalizeDataSourceId(script.getDataSourceId());
-        Long targetDataSourceId = normalizeDataSourceId(version.getDataSourceId());
         checkDataSourceUsable(targetDataSourceId);
         dspScriptVersionMapper.updateVersionStatusByScriptId(scriptId, "0");
         dspScriptVersionMapper.markVersionCurrent(versionId);
@@ -479,6 +484,21 @@ public class DspScriptServiceImpl implements IDspScriptService
     private Long normalizeDataSourceId(Long dataSourceId)
     {
         return dataSourceId == null ? DspDataSource.DEFAULT_ID : dataSourceId;
+    }
+
+    /**
+     * 目标数据源的数据库类型（用于校验阶段的方言提示）
+     * <p>
+     * 默认主库与未填写数据库类型的数据源返回 {@code null}，此时跳过方言检查。
+     */
+    private String databaseTypeOf(Long dataSourceId)
+    {
+        if (DspDataSourceManager.isDefault(dataSourceId))
+        {
+            return null;
+        }
+        DspDataSource config = dspDataSourceMapper.selectDspDataSourceById(dataSourceId);
+        return config == null ? null : config.getDbType();
     }
 
     /**

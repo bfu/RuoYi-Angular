@@ -140,4 +140,49 @@ class DspValidatorTest
         assertFalse(validator().validate(null, SLUG, FRAGMENT).isValid());
         assertFalse(validator().validate(SCRIPT_ID, "  ", FRAGMENT).isValid());
     }
+
+    @Test
+    void dialectMismatchIsReportedAsWarning()
+    {
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG,
+                "<select resultType=\"map\">select `id` from demo_user limit 0, 10</select>", "postgresql");
+
+        // 方言问题只告警、不阻断：判断基于关键字特征，可能在个别环境误判
+        assertTrue(result.isValid(), () -> String.join(",", result.getErrors()));
+        assertTrue(result.getWarnings().stream().anyMatch(item -> item.contains("反引号")),
+                () -> String.join(",", result.getWarnings()));
+        assertTrue(result.getWarnings().stream().anyMatch(item -> item.contains("两参数 LIMIT")),
+                () -> String.join(",", result.getWarnings()));
+    }
+
+    @Test
+    void matchingDialectKeepsWarningsEmpty()
+    {
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG,
+                "<select resultType=\"map\">select `id` from demo_user limit 0, 10</select>", "mysql");
+
+        assertTrue(result.isValid());
+        assertTrue(result.getWarnings().isEmpty(), () -> String.join(",", result.getWarnings()));
+    }
+
+    @Test
+    void dialectCheckSkippedWithoutDatabaseType()
+    {
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG,
+                "<select resultType=\"map\">select `id` from demo_user limit 0, 10</select>");
+
+        assertTrue(result.isValid());
+        assertTrue(result.getWarnings().isEmpty(), () -> String.join(",", result.getWarnings()));
+    }
+
+    @Test
+    void oracleLimitIsReportedWithoutTwoArgDuplicate()
+    {
+        DspValidationResult result = validator().validate(SCRIPT_ID, SLUG,
+                "<select resultType=\"map\">select id from demo_user order by id limit #{size}</select>", "oracle");
+
+        assertEquals(1, result.getWarnings().size(), () -> String.join(",", result.getWarnings()));
+        assertTrue(result.getWarnings().get(0).contains("LIMIT 不是 oracle 的语法"),
+                () -> String.join(",", result.getWarnings()));
+    }
 }

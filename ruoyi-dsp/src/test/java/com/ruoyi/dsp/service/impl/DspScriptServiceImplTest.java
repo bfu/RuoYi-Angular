@@ -88,7 +88,7 @@ class DspScriptServiceImplTest
         dspEngine = mock(DspEngine.class);
         dspDataSourceManager = mock(DspDataSourceManager.class);
         reloadNotifier = mock(DspReloadNotifier.class);
-        when(dspValidator.validate(anyLong(), any(), any())).thenReturn(new DspValidationResult());
+        when(dspValidator.validate(anyLong(), any(), any(), any())).thenReturn(new DspValidationResult());
         service = new DspScriptServiceImpl();
         ReflectionTestUtils.setField(service, "dspScriptMapper", dspScriptMapper);
         ReflectionTestUtils.setField(service, "dspScriptVersionMapper", dspScriptVersionMapper);
@@ -159,6 +159,28 @@ class DspScriptServiceImplTest
         {
             TransactionSynchronizationManager.clearSynchronization();
         }
+    }
+
+    @Test
+    void validateScriptChecksDialectAgainstBoundDataSource()
+    {
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(publishedScript(RUNTIME_DS));
+        when(dspDataSourceMapper.selectDspDataSourceById(RUNTIME_DS)).thenReturn(dataSource(RUNTIME_DS, "报表库", "0"));
+
+        service.validateScript(SCRIPT_ID, null);
+
+        // 校验阶段带上绑定数据源的数据库类型，跨方言写法才能被提示出来
+        verify(dspValidator).validate(SCRIPT_ID, SLUG, CONTENT, "postgresql");
+    }
+
+    @Test
+    void validateScriptOnDefaultDataSourceSkipsDialectCheck()
+    {
+        when(dspScriptMapper.selectDspScriptById(SCRIPT_ID)).thenReturn(publishedScript(0L));
+
+        service.validateScript(SCRIPT_ID, CONTENT);
+
+        verify(dspValidator).validate(SCRIPT_ID, SLUG, CONTENT, null);
     }
 
     @Test
@@ -432,6 +454,8 @@ class DspScriptServiceImplTest
         config.setDataSourceId(dataSourceId);
         config.setName(name);
         config.setStatus(status);
+        // 非 MySQL 数据源：用于校验方言提示是否带上正确的数据库类型
+        config.setDbType("postgresql");
         return config;
     }
 }

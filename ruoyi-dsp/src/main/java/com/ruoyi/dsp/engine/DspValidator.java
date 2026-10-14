@@ -6,7 +6,9 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
@@ -147,7 +149,7 @@ public class DspValidator
     }
 
     /**
-     * 校验脚本内容
+     * 校验脚本内容（不指定目标数据库类型，跳过方言检查）
      *
      * @param scriptId 脚本 ID（作为运行时 namespace）
      * @param slug     脚本标识（作为语句 id）
@@ -155,6 +157,21 @@ public class DspValidator
      * @return 校验结果
      */
     public DspValidationResult validate(Long scriptId, String slug, String content)
+    {
+        return validate(scriptId, slug, content, null);
+    }
+
+    /**
+     * 校验脚本内容
+     *
+     * @param scriptId     脚本 ID（作为运行时 namespace）
+     * @param slug         脚本标识（作为语句 id）
+     * @param content      语句片段（一条语句，无需写 id）
+     * @param databaseType 目标数据源的数据库类型（如 {@code mysql}/{@code postgresql}/{@code oracle}），
+     *                     用于方言提示；为空时跳过方言检查
+     * @return 校验结果
+     */
+    public DspValidationResult validate(Long scriptId, String slug, String content, String databaseType)
     {
         DspValidationResult result = new DspValidationResult();
         if (scriptId == null)
@@ -224,6 +241,8 @@ public class DspValidator
             {
                 result.addError("<select> 必须指定 resultType 或 resultMap");
             }
+            // 方言提示：绑定非 MySQL 数据源时，MySQL 专属写法往往要到执行才报错
+            checkDialect(result, statement.getTextContent(), databaseType);
         }
 
         if (content.contains("${"))
@@ -386,5 +405,103 @@ public class DspValidator
         }
         log.debug("校验异常", throwable);
         return message;
+    }
+
+    /**
+     * 方言提示规则
+     *
+     * @param pattern     命中的写法
+     * @param unsupported 不支持该写法的数据库类型（归一化后），命中即告警
+     * @param hint        提示文案，{@code %s} 处填数据源类型
+     */
+    private record DialectRule(Pattern pattern, Set<String> unsupported, String hint)
+    {
+    }
+
+    /**
+     * 方言提示规则表：命中的写法在目标数据库上不被支持时给出告警
+     * <p>
+     * 只提示不阻断：判断基于关键字特征，存在误判可能；真正确认仍应在目标库上测试执行。
+     */
+    private static final List<DialectRule> DIALECT_RULES = List.of(
+            // 反引号标识符：MySQL 系专属
+            new DialectRule(Pattern.compile("`"), Set.of("postgresql", "oracle", "mssql"),
+                    "反引号是 MySQL 标识符写法，%s 请改用双引号或不加引号"),
+            // 两参数 LIMIT：limit 偏移, 行数
+            new DialectRule(Pattern.compile("(?i)\\blimit\\s+[^,;()]+,"), Set.of("postgresql", "oracle", "mssql"),
+                    "两参数 LIMIT（limit 偏移, 行数）是 MySQL 写法，%s 请改用 LIMIT 行数 OFFSET 偏移"),
+            // 单参数 LIMIT：排除两参数写法，避免与上一条重复告警
+            new DialectRule(Pattern.compile("(?i)\\blimit\\b(?!\\s*[^,;]*\\s*,)"), Set.of("oracle", "mssql"),
+                    "LIMIT 不是 %s 的语法，请改用 FETCH FIRST/OFFSET FETCH"),
+            new DialectRule(Pattern.compile("(?i)\\bsysdate\\s*\\("), Set.of("postgresql", "mssql"),
+                    "SYSDATE() 不是 %s 的函数，请改用 CURRENT_TIMESTAMP"),
+            new DialectRule(Pattern.compile("(?i)\\bnow\\s*\\("), Set.of("oracle", "mssql"),
+                    "NOW() 不是 %s 的函数，请改用 CURRENT_TIMESTAMP"),
+            new DialectRule(Pattern.compile("(?i)\\bifnull\\s*\\("), Set.of("postgresql", "oracle", "mssql"),
+                    "IFNULL() 是 MySQL 函数，%s 请改用 COALESCE()"),
+            new DialectRule(Pattern.compile("(?i)\\bnvl\\s*\\("), Set.of("mysql", "postgresql", "mssql"),
+                    "NVL() 是 Oracle 函数，%s 请改用 COALESCE()"),
+            new DialectRule(Pattern.compile("(?i)\\bgetdate\\s*\\("), Set.of("mysql", "postgresql", "oracle"),
+                    "GETDATE() 是 SQL Server 函数，%s 请改用 CURRENT_TIMESTAMP"),
+            new DialectRule(Pattern.compile("(?i)\\brownum\\b"), Set.of("mysql", "postgresql", "mssql"),
+                    "ROWNUM 是 Oracle 伪列，%s 请改用 LIMIT/FETCH FIRST 或窗口函数"),
+            new DialectRule(Pattern.compile("(?i)\\bfrom\\s+dual\\b"), Set.of("mysql", "postgresql", "mssql"),
+                    "DUAL 是 Oracle 专用表，%s 直接查询常量即可（如 select 1）"),
+            new DialectRule(Pattern.compile("\\|\\|"), Set.of("mysql", "mssql"),
+                    "MySQL/SQL Server 中 || 不是字符串拼接，%s 请改用 CONCAT()/+"),
+            new DialectRule(Pattern.compile("(?i)\\bselect\\s+top\\s+\\d+"), Set.of("mysql", "postgresql", "oracle"),
+                    "TOP n 是 SQL Server 语法，%s 请改用 LIMIT/FETCH FIRST 或 ROW_NUMBER"));
+
+    /**
+     * 按目标数据库类型给出方言告警（只提示、不阻断，避免误判阻挡发布）
+     *
+     * @param result       校验结果
+     * @param sql          语句片段文本
+     * @param databaseType 目标数据源的数据库类型，为空时跳过
+     */
+    private void checkDialect(DspValidationResult result, String sql, String databaseType)
+    {
+        String type = normalizeDatabaseType(databaseType);
+        if (type == null || StringUtils.isBlank(sql))
+        {
+            return;
+        }
+        String label = databaseType.trim();
+        for (DialectRule rule : DIALECT_RULES)
+        {
+            if (rule.unsupported().contains(type) && rule.pattern().matcher(sql).find())
+            {
+                result.addWarning(String.format(rule.hint(), label));
+            }
+        }
+    }
+
+    /**
+     * 归一化数据库类型：兼容常见别名；无法识别时返回原值（不会命中任何规则）
+     */
+    private static String normalizeDatabaseType(String databaseType)
+    {
+        if (StringUtils.isBlank(databaseType))
+        {
+            return null;
+        }
+        String type = databaseType.trim().toLowerCase(Locale.ROOT);
+        if (type.contains("maria") || type.contains("mysql"))
+        {
+            return "mysql";
+        }
+        if (type.contains("postgre") || type.contains("pgsql") || "pg".equals(type))
+        {
+            return "postgresql";
+        }
+        if (type.contains("oracle"))
+        {
+            return "oracle";
+        }
+        if (type.contains("sqlserver") || type.contains("sql server") || type.contains("mssql"))
+        {
+            return "mssql";
+        }
+        return type;
     }
 }
