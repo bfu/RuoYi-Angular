@@ -12,6 +12,12 @@ ruoyi:
   addressEnabled: false
   # 验证码类型 math 数字计算 char 字符验证
   captchaType: math
+  # API Key 免登录授权（ruoyi-oauth）
+  oauth:
+    # 是否启用 API Key 免登录（false 后密钥请求头被忽略，全部走登录/JWT 流程）
+    enabled: true
+    # 携带密钥的请求头名称
+    header-name: X-API-Key
 
 # 开发环境配置
 server:
@@ -145,11 +151,3 @@ xss:
   excludes: /system/notice
   # 匹配链接
   urlPatterns: /system/*,/monitor/*,/tool/*
-
-# API Key 免登录授权（ruoyi-oauth）
-ruoyi:
-  oauth:
-    # 是否启用 API Key 免登录（false 后密钥请求头被忽略，全部走登录/JWT 流程）
-    enabled: true
-    # 携带密钥的请求头名称
-    header-name: X-API-Key
