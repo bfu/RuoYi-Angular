@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.oauth.mapper.OauthApiKeyMapper">
+
+    <resultMap type="OauthApiKey" id="OauthApiKeyResult">
+        <id     property="keyId"        column="key_id"        />
+        <result property="name"         column="name"          />
+        <result property="keyHash"      column="key_hash"      />
+        <result property="userId"       column="user_id"       />
+        <result property="userName"     column="user_name"     />
+        <result property="status"       column="status"        />
+        <result property="expiresTime"  column="expires_time"  />
+        <result property="lastUsedTime" column="last_used_time" />
+        <result property="createBy"     column="create_by"     />
+        <result property="createTime"   column="create_time"   />
+        <result property="updateBy"     column="update_by"     />
+        <result property="updateTime"   column="update_time"   />
+        <result property="remark"       column="remark"        />
+    </resultMap>
+
+    <sql id="selectOauthApiKeyVo">
+        select k.key_id, k.name, k.user_id, u.user_name, k.status, k.expires_time, k.last_used_time, k.create_by, k.create_time, k.update_by, k.update_time, k.remark
+        from oauth_api_key k
+        left join sys_user u on u.user_id = k.user_id
+    </sql>
+
+    <select id="selectOauthApiKeyList" parameterType="OauthApiKey" resultMap="OauthApiKeyResult">
+        <include refid="selectOauthApiKeyVo"/>
+        <where>
+            <if test="name != null and name != ''"> and k.name like concat('%', #{name}, '%')</if>
+            <if test="userId != null"> and k.user_id = #{userId}</if>
+            <if test="status != null and status != ''"> and k.status = #{status}</if>
+        </where>
+        order by k.update_time desc, k.key_id desc
+    </select>
+
+    <select id="selectOauthApiKeyById" parameterType="Long" resultMap="OauthApiKeyResult">
+        <include refid="selectOauthApiKeyVo"/>
+        where k.key_id = #{keyId}
+    </select>
+
+    <select id="selectOauthApiKeyByKeyHash" parameterType="String" resultMap="OauthApiKeyResult">
+        select k.key_id, k.name, k.key_hash, k.user_id, u.user_name, k.status, k.expires_time, k.last_used_time
+        from oauth_api_key k
+        left join sys_user u on u.user_id = k.user_id
+        where k.key_hash = #{keyHash} limit 1
+    </select>
+
+    <insert id="insertOauthApiKey" parameterType="OauthApiKey" useGeneratedKeys="true" keyProperty="keyId">
+        insert into oauth_api_key (
+            name,
+            key_hash,
+            user_id,
+            status,
+            expires_time,
+            create_by,
+            create_time,
+            remark
+        ) values (
+            #{name},
+            #{keyHash},
+            #{userId},
+            #{status},
+            #{expiresTime},
+            #{createBy},
+            sysdate(),
+            #{remark}
+        )
+    </insert>
+
+    <!-- 仅管理端「修改」调用：expires_time 为空表示永久有效（显式清空），故不做空值跳过 -->
+    <update id="updateOauthApiKey" parameterType="OauthApiKey">
+        update oauth_api_key
+        <set>
+            <if test="name != null and name != ''"> name = #{name},</if>
+            <if test="userId != null"> user_id = #{userId},</if>
+            <if test="status != null and status != ''"> status = #{status},</if>
+            expires_time = #{expiresTime},
+            <if test="keyHash != null and keyHash != ''"> key_hash = #{keyHash},</if>
+            <if test="updateBy != null"> update_by = #{updateBy},</if>
+            update_time = sysdate()
+        </set>
+        where key_id = #{keyId}
+    </update>
+
+    <!-- 重置密钥：换新摘要，旧密钥立即失效 -->
+    <update id="resetOauthApiKey">
+        update oauth_api_key
+        set key_hash = #{keyHash}, update_by = #{updateBy}, update_time = sysdate()
+        where key_id = #{keyId}
+    </update>
+
+    <delete id="deleteOauthApiKeyByIds">
+        delete from oauth_api_key where key_id in
+        <foreach collection="array" item="keyId" open="(" separator="," close=")">
+            #{keyId}
+        </foreach>
+    </delete>
+
+    <update id="updateLastUsedTime">
+        update oauth_api_key set last_used_time = #{lastUsedTime} where key_id = #{keyId}
+    </update>
+
+</mapper>

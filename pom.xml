@@ -177,6 +177,13 @@
                 <version>${ruoyi.version}</version>
             </dependency>
 
+            <!-- API Key 免登录授权-->
+            <dependency>
+                <groupId>com.ruoyi</groupId>
+                <artifactId>ruoyi-oauth</artifactId>
+                <version>${ruoyi.version}</version>
+            </dependency>
+
         </dependencies>
     </dependencyManagement>
 
@@ -188,6 +195,7 @@
         <module>ruoyi-generator</module>
         <module>ruoyi-common</module>
         <module>ruoyi-dsp</module>
+        <module>ruoyi-oauth</module>
     </modules>
     <packaging>pom</packaging>
 

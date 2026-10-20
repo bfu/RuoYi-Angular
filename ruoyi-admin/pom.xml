@@ -60,6 +60,12 @@
             <artifactId>ruoyi-dsp</artifactId>
         </dependency>
 
+        <!-- API Key 免登录授权-->
+        <dependency>
+            <groupId>com.ruoyi</groupId>
+            <artifactId>ruoyi-oauth</artifactId>
+        </dependency>
+
     </dependencies>
 
     <build>

@@ -10,6 +10,7 @@ RuoYi-Vue 3.9.2 的衍生**后端**仓库：Spring Boot 4.1 / JDK 17 / MyBatis �
 | ---- | ---- | ------ |
 | 本仓库（`ruoyi-admin`/`framework`/`system`/`common`/`quartz`/`generator`） | 从上游复制过来的官方后端代码 | ⚠️ 非必要不改（优先把功能落在衍生部分） |
 | `ruoyi-dsp/` | 本仓库的**核心定制**：MyBatis 动态脚本执行平台 | ✅ 允许 |
+| `ruoyi-oauth/` | API Key 免登录授权（见下文「API Key 免登录授权」） | ✅ 允许 |
 | `ruoyi-generator/src/main/resources/vm/angular/` | Angular（NG-ZORRO）代码生成模板 | ✅ 允许 |
 | `sql/dsp_*.sql` | dsp 平台建表 + 菜单权限脚本 | ✅ 允许 |
 | `ruoyi-vue3/` | 上游 Vue3 前端的本地克隆，被 `.gitignore` 忽略、不入库 | ❌ 只读对照 |
@@ -28,6 +29,17 @@ RuoYi-Vue 3.9.2 的衍生**后端**仓库：Spring Boot 4.1 / JDK 17 / MyBatis �
 | `ruoyi-dsp` | 动态脚本执行平台（本项目定制，见第三节） |
 
 约定：MyBatis 映射由 `application.yml` 的 `mybatis.mapperLocations: classpath*:mapper/**/*Mapper.xml` + `typeAliasesPackage: com.ruoyi.**.domain` 自动加载，组件扫描覆盖 `com.ruoyi.**`；因此**新增代码只要包名放对就无需改配置**（`ruoyi-dsp` 就是这样接入的：仅需在 `ruoyi-admin/pom.xml` 声明依赖 + 根 `pom.xml` 的 `<modules>` 登记）。
+
+### ruoyi-oauth：API Key 免登录授权
+
+请求头（默认 `X-API-Key`，`ruoyi.oauth.header-name` 可改）携带有效密钥即可免登录访问接口：
+密钥绑定某个系统用户，认证后完全以该用户身份行事（`@PreAuthorize`、数据权限、`@Log` 与登录态一致）。
+
+- **实现**：`ApiKeyAuthenticationFilter` 取密钥 → `OauthApiKeyServiceImpl.authenticate` 按 `SHA-256(明文)` 摘要精确查 `oauth_api_key`（库中不存明文），校验存在/未停用/未过期/绑定用户可用 → 构造绑定用户的 `LoginUser` 写入 `SecurityContext`。无请求头时直接放行，仍走原 JWT 流程。
+- **接入方式（framework 零改动）**：`ApiKeyAuthCustomizer` 注册 `Customizer<HttpSecurity>` Bean——Spring Security 会把它应用到每条安全过滤器链，从而把认证过滤器插到 JWT 过滤器之前。**不要**去改 `ruoyi-framework` 的 `SecurityConfig`。`ruoyi.oauth.enabled=false` 时整条装配关闭，密钥请求头被忽略。
+- **管理接口** `/oauth/apikey`（list/query/add/edit/remove/reset），权限码 `oauth:apikey:*`；明文密钥只在新增/重置响应返回一次，`reset` 换摘要后旧密钥立即失效。
+- **初始化**：`sql/oauth_20261021.sql`（建 `oauth_api_key` + 菜单「开放接口/密钥管理」）。
+- **测试**：`mvn -pl ruoyi-oauth -am test`（Mockito，不连库）。
 
 ## 三、ruoyi-dsp：MyBatis 动态脚本执行平台（核心定制）
 
@@ -80,7 +92,7 @@ RuoYi-Vue 3.9.2 的衍生**后端**仓库：Spring Boot 4.1 / JDK 17 / MyBatis �
 
 ### 表与初始化
 
-`sql/ry_20260417.sql` → `sql/quartz.sql` → `sql/dsp_20261013.sql`（后者建 `dsp_script`、`dsp_script_version`、`dsp_data_source` 三表，并注册菜单「动态脚本」及 `dsp:*` 权限码）。
+`sql/ry_20260417.sql` → `sql/quartz.sql` → `sql/dsp_20261013.sql`（后者建 `dsp_script`、`dsp_script_version`、`dsp_data_source` 三表，并注册菜单「动态脚本」及 `dsp:*` 权限码）。API Key 免登录授权另需 `sql/oauth_20261021.sql`（建 `oauth_api_key` + 菜单「开放接口/密钥管理」）。
 
 ### 测试
 
@@ -110,7 +122,7 @@ java -jar ruoyi-admin/target/ruoyi-admin.jar # 或运行 com.ruoyi.RuoYiApplicat
 ```
 
 - 端口 `8080`、`context-path: /`；接口文档 `/swagger-ui.html`、`/v3/api-docs`。
-- 数据库默认库名为 **`ry_ng`**（区别于上游的 `ry-vue`），配置在 `ruoyi-admin/src/main/resources/application-druid.yml`；`application.yml` 中 Redis 与上传路径 `ruoyi.profile` 也需按本机环境调整（当前提交值指向内网 `192.168.2.105`）。
+- 数据库默认库名为 **`ry_ng`**（区别于上游的 `ry-vue`），配置在 `ruoyi-admin/src/main/resources/application-druid.yml`；`application.yml` 中 Redis 与上传路径 `ruoyi.profile` 也需按本机环境调整（当前提交值指向内网 `192.168.2.109`）。
 - 辅助脚本：`bin/{clean,package,run}.bat`；`ry.bat`（Windows 交互式 start/stop/restart/status）、`ry.sh`（Linux）。
 
 ## 六、上游同步

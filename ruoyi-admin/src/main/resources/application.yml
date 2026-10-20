@@ -72,7 +72,7 @@ spring:
     # redis 配置
     redis:
       # 地址
-      host: 192.168.2.105
+      host: 192.168.2.109
       # 端口，默认为6379
       port: 6379
       # 数据库索引
@@ -145,3 +145,11 @@ xss:
   excludes: /system/notice
   # 匹配链接
   urlPatterns: /system/*,/monitor/*,/tool/*
+
+# API Key 免登录授权（ruoyi-oauth）
+ruoyi:
+  oauth:
+    # 是否启用 API Key 免登录（false 后密钥请求头被忽略，全部走登录/JWT 流程）
+    enabled: true
+    # 携带密钥的请求头名称
+    header-name: X-API-Key
