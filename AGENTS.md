@@ -38,6 +38,7 @@ RuoYi-Vue 3.9.2 的衍生**后端**仓库：Spring Boot 4.1 / JDK 17 / MyBatis �
 - **实现**：`ApiKeyAuthenticationFilter` 取密钥 → `OauthApiKeyServiceImpl.authenticate` 按 `SHA-256(明文)` 摘要精确查 `oauth_api_key`（库中不存明文），校验存在/未停用/未过期/绑定用户可用 → 构造绑定用户的 `LoginUser` 写入 `SecurityContext`。无请求头时直接放行，仍走原 JWT 流程。
 - **接入方式（framework 零改动）**：`ApiKeyAuthCustomizer` 注册 `Customizer<HttpSecurity>` Bean——Spring Security 会把它应用到每条安全过滤器链，从而把认证过滤器插到 JWT 过滤器之前。**不要**去改 `ruoyi-framework` 的 `SecurityConfig`。`ruoyi.oauth.enabled=false` 时整条装配关闭，密钥请求头被忽略。
 - **管理接口** `/oauth/apikey`（list/query/add/edit/remove/reset），权限码 `oauth:apikey:*`；明文密钥只在新增/重置响应返回一次，`reset` 换摘要后旧密钥立即失效。
+- **前端配套**（`../inforstack-ng`）：`core/models/oauth.ts` + `api/oauth/apikey.ts` + `pages/oauth/apikey/`（NG-ZORRO 列表与弹窗 CRUD），已在 `pages/component-map.ts` 登记 `oauth/apikey/index`（与后端菜单 component 一致）；跨仓库改动需两边分别提交推送。
 - **初始化**：`sql/oauth_20261021.sql`（建 `oauth_api_key` + 菜单「开放接口/密钥管理」）。
 - **测试**：`mvn -pl ruoyi-oauth -am test`（Mockito，不连库）。
 
