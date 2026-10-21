@@ -38,3 +38,16 @@ insert into sys_menu values('1401', '密钥新增', '140', '2', '', '', '', '', 
 insert into sys_menu values('1402', '密钥修改', '140', '3', '', '', '', '', 1, 0, 'F', '0', '0', 'oauth:apikey:edit',   '#', 'admin', sysdate(), '', null, '');
 insert into sys_menu values('1403', '密钥删除', '140', '4', '', '', '', '', 1, 0, 'F', '0', '0', 'oauth:apikey:remove', '#', 'admin', sysdate(), '', null, '');
 insert into sys_menu values('1404', '密钥重置', '140', '5', '', '', '', '', 1, 0, 'F', '0', '0', 'oauth:apikey:reset',  '#', 'admin', sysdate(), '', null, '');
+
+-- ----------------------------
+-- 3、角色菜单关联
+-- 管理员(role_id=1)拥有全部菜单，无需关联；
+-- 这里按初始库惯例关联默认角色「普通角色」(role_id=2)，其余角色在「菜单管理」按需分配
+-- ----------------------------
+insert into sys_role_menu values ('2', '6');
+insert into sys_role_menu values ('2', '140');
+insert into sys_role_menu values ('2', '1400');
+insert into sys_role_menu values ('2', '1401');
+insert into sys_role_menu values ('2', '1402');
+insert into sys_role_menu values ('2', '1403');
+insert into sys_role_menu values ('2', '1404');
